@@ -96,6 +96,68 @@ class Result(HerdCase):
         self.assertIn("no subagent named nope", self.refused("result", "nope"))
 
 
+class Moved(HerdCase):
+    """Any pane move ends herdr agent wait with an error while the agent keeps working. The fake's
+    wait fails at once on a working pane, which is what cmd_wait sees after a move."""
+
+    def setUp(self):
+        super().setUp()
+        self.spawn("a")
+        self.set_status("a", "working")
+        self.say("a", assistant_line("FINAL"))
+        self.pid = self.entry("a")["pane"]
+
+    def waits(self, pane=None):
+        return self.calls("agent", "wait", pane or self.pid)
+
+    def test_keeps_waiting_while_the_agent_works(self):
+        self.change_pane("a", steps=[{}, {}, {"status": "idle"}])
+        out = self.ok("wait", "a")
+        self.assertIn("a: idle", out)
+        self.assertIn("FINAL", out)
+        self.assertEqual(len(self.waits()), 3)
+
+    def test_follows_a_new_pane_id(self):
+        """The copy sorts after the old pane, so it only takes over when the step closes that pane."""
+        def copy(state):
+            state["panes"]["w2:p1"] = dict(state["panes"][self.pid], tab="w2:t1")
+            state["tabs"]["w2:t1"] = {"label": "moved", "root": {"pane": "w2:p1"}}
+        self.change(copy)
+        self.change_pane("a", steps=[{"gone": True}])
+        out = self.ok("wait", "a")
+        self.assertIn("a: idle", out)
+        self.assertIn("FINAL", out)
+        self.assertEqual(len(self.waits()), 1)
+        self.assertEqual(len(self.waits("w2:p1")), 1)
+        self.assertEqual(self.entry("a")["pane"], "w2:p1")
+
+    def test_stops_when_the_agent_is_really_gone(self):
+        self.change_pane("a", steps=[{}, {"gone": True}])
+        out = self.ok("wait", "a")
+        self.assertIn("a: gone", out)
+        self.assertIn("FINAL", out)
+
+    def test_stops_at_the_deadline_without_spinning(self):
+        self.change_pane("a", busy=True)
+        out = self.ok("wait", "a", "--timeout", "3000")
+        self.assertIn("a: working", out)
+        self.assertLessEqual(len(self.waits()), 3)  # sleeps skip the test clock, so a spin would make far more
+        for call in self.waits():
+            self.assertLessEqual(int(call[call.index("--timeout") + 1]), 3000)
+
+    def test_work_seen_between_looks_resets_the_patience(self):
+        """A failed look misses the wake-up, so a pause must not run on through the work that follows."""
+        path = self.transcript("a")
+        self.say("a", job_line("job1"), assistant_line("LAUNCHED"))
+        self.set_status("a", "idle")
+        self.change_pane("a", steps=[{}, {}, {}, {}, {"status": "working"}, {"status": "working"}, {"status": "idle"},
+                                     {"status": "working", "append": [[path, notification_line("job1")],
+                                                                      [path, assistant_line("DONE")]]}])
+        out = self.ok("wait", "a", patience=3)
+        self.assertIn("DONE", out)
+        self.assertNotIn("paused", out)
+
+
 class Pause(HerdCase):
     """An agent can end its turn with background jobs running. That is a pause, not the end."""
 

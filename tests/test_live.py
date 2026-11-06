@@ -219,17 +219,14 @@ class Plain(LiveCase):
         self.assertEqual(got[0][0], 0, got[0][1])
         return got[0][1], pane, moved["pane"]["pane_id"]
 
-    @unittest.expectedFailure
     def test_wait_follows_a_pane_moved_to_a_new_tab(self):
-        """Known bug: any move ends herdr agent wait with agent_not_running, even when the pane id
-        stays the same. cmd_wait ignores that error, reports the working pane and exits 0."""
+        """Any move ends herdr agent wait with agent_not_running, even when the pane id stays the same."""
         out, old, new = self.wait_through_a_move("live-t", "--new-tab")
         self.assertEqual(old, new)
         self.assertIn("MOVED_DONE", out)
 
-    @unittest.expectedFailure
     def test_wait_follows_a_pane_moved_to_a_new_workspace(self):
-        """Known bug: as for a new tab, and here the pane id changes as well."""
+        """As for a new tab, and here the pane id changes as well."""
         out, old, new = self.wait_through_a_move("live-m", "--new-workspace")
         self.assertNotEqual(old, new)
         self.assertIn("MOVED_DONE", out)

@@ -983,10 +983,14 @@ def cmd_wait(a):
         if deadline:
             args += ["--timeout", str(left())]
         herdr(*args, check=False)
-        time.sleep(1)  # let the transcript flush
+        time.sleep(1)  # let the transcript flush, and pace this loop when herdr returns at once
         reg, alive = synced()
         m = reg.get(a.name, m)
         agent = locate(a.name, m, alive)
+        # Any pane move ends herdr's wait with an error, so only the agent's state says it stopped.
+        if agent and agent["agent_status"] == "working" and not (deadline and time.time() >= deadline):
+            paused_at = None
+            continue
         settled = agent and agent["agent_status"] not in ("working", "blocked")
         jobs = pending_jobs(m.get("session")) if settled else 0
         if not jobs:
