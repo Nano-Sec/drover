@@ -14,7 +14,7 @@ TRANSCRIPTS = ["background_running.jsonl", "background_finished.jsonl", "backgro
 EMPTY_BOX = ["idle_empty", "idle_shell_running", "synthetic_ghost_suggestion", "synthetic_cursor_only",
              "synthetic_footer_text"]
 TYPED_BOX = ["draft_one_line", "draft_two_lines", "draft_long_scrolled", "draft_empty_first_line",
-             "draft_box_cut_off", "synthetic_blank_window"]
+             "draft_box_cut_off", "synthetic_blank_window", "synthetic_color_ending_in_seven"]
 NO_BOX = ["draft_box_off_screen", "synthetic_old_prompt_above", "synthetic_box_cut_off_empty"]
 
 

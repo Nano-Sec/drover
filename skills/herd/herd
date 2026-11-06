@@ -272,6 +272,26 @@ def screen(pane, ansi=True):
     return r if isinstance(r, str) else None
 
 
+def faint_code(params):
+    """True if a color code turns on dim or inverse. Skips the numbers inside 38;2;r;g;b and 38;5;n."""
+    parts, n = params.split(";"), 0
+    while n < len(parts):
+        if parts[n] in ("38", "48", "58"):
+            n += 5 if parts[n + 1:n + 2] == ["2"] else 3
+        elif parts[n] in ("2", "7"):
+            return True
+        else:
+            n += 1
+    return False
+
+
+def without_faint(row):
+    for code in re.finditer(r"\x1b\[([0-9;:]*)m", row):
+        if faint_code(code.group(1)):
+            return row[:code.start()]
+    return row
+
+
 def draft_in(text):
     """Read the input box off an ansi screen: True if it holds typed text, False if it is empty,
     None if that cannot be told. Depends on Claude drawing the box between two rules, with a ❯
@@ -287,7 +307,7 @@ def draft_in(text):
     rows = lines[first:end]
     rows[0] = rows[0].split("❯", 1)[1]
     # Dim or inverse-only content is a ghost suggestion or the cursor, not typed text.
-    rows = [re.sub(r"\x1b\[(?:[0-9;:]*;)?(?:2|7)m.*", "", row) for row in rows]
+    rows = [without_faint(row) for row in rows]
     typed = any(re.sub(r"\x1b\[[0-9;:]*m", "", row).strip() for row in rows)
     if end is None:
         return True if typed and "\x1b[" in text else None  # the rest of the box is out of view

@@ -41,9 +41,9 @@ def transcript_problems(text):
 
 def screen_problems(text):
     """Problems with an idle Claude screen, as read by has_draft."""
-    tail = [ANSI.sub("", line) for line in text.splitlines()[-10:]]
-    if not any(line.lstrip().startswith("❯") for line in tail):
-        return ["no input line starting with ❯ in the last 10 screen lines"]
+    tail = [ANSI.sub("", line) for line in text.splitlines()[-11:]]
+    if not any(line.startswith("❯") and above.startswith("──") for above, line in zip(tail, tail[1:])):
+        return ["no input line starting with ❯ under a rule in the last 10 screen lines"]
     return []
 
 
