@@ -234,7 +234,6 @@ class Plain(LiveCase):
         self.assertNotEqual(old, new)
         self.assertIn("MOVED_DONE", out)
 
-    @unittest.expectedFailure
     def test_wrapup_finds_a_pane_moved_to_a_new_workspace(self):
         """Known bug: cmd_wrapup uses load() and alive.get(pane), not synced() and locate(), so a
         live pane with a new id is skipped as gone."""
