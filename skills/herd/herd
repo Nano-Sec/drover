@@ -11,6 +11,7 @@ ANY_STATE = ["working", "blocked", "done", "idle"]
 MIN_PYTHON = (3, 9)
 MIN_HERDR = (0, 8, 0)  # the oldest version herd has been tested against
 FALLBACK_MODE = "manual"  # when auto is unavailable. Never bypassPermissions.
+WARN = "warn"  # a doctor result: something is limited, but herd still works
 AUTO_REFUSED = re.compile(r"auto mode|'auto' is invalid", re.I)  # on the screen of a pane that exited
 STATE_DIR = os.path.abspath(os.path.expanduser(os.environ.get("HERD_STATE_DIR") or "~/.claude/herd"))
 PROJECTS_DIR = os.path.abspath(os.path.expanduser(os.environ.get("HERD_PROJECTS_DIR") or "~/.claude/projects"))
@@ -364,14 +365,22 @@ def paste(path):
     return text
 
 
+def global_context():
+    """The user's own CLAUDE.md, which every session loads whatever its folder."""
+    config = os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"
+    return os.path.realpath(os.path.join(os.path.expanduser(config), "CLAUDE.md"))
+
+
 def outside_context(cwd):
     """CLAUDE.md files around the primary that a session started in cwd would not load."""
-    home = os.path.expanduser("~")
+    home = os.path.realpath(os.path.expanduser("~"))
+    loaded = global_context()
     found = []
     d = os.getcwd()
     while d not in (home, os.path.dirname(d)):
         path = os.path.join(d, "CLAUDE.md")
-        if os.path.isfile(path) and not (cwd + os.sep).startswith(d + os.sep):
+        if (os.path.isfile(path) and not (cwd + os.sep).startswith(d + os.sep)
+                and os.path.realpath(path) != loaded):
             found.append(path)
         d = os.path.dirname(d)
     return list(reversed(found))
@@ -690,8 +699,10 @@ def pane_output(pane):
 
 
 def start_in_pane(name, pane, mode, model):
-    """Start Claude in the pane, retrying while its shell comes up. If auto mode is what stops it,
-    fall back to FALLBACK_MODE and say so. Returns (agent start result or None, mode used)."""
+    """Start Claude in the pane, retrying while its shell comes up. If auto mode will not start,
+    try FALLBACK_MODE, even with no sign that auto is the cause: Claude's refusal may be worded
+    differently, and the fallback only adds approval prompts. Returns (agent start result or
+    None, mode used), and the caller says so if the mode changed."""
     for _ in range(5):
         time.sleep(1)
         started = start_claude(name, pane, mode, model)
@@ -705,9 +716,6 @@ def start_in_pane(name, pane, mode, model):
         time.sleep(1)
         started = start_claude(name, pane, FALLBACK_MODE, model)
         if started:
-            warn(f"{name} could not start in auto mode, which may not be available on this account or "
-                 f"Claude version, so it is running in {FALLBACK_MODE} mode instead{auto_cost(FALLBACK_MODE)}. "
-                 "Run herd doctor for details.")
             return started, FALLBACK_MODE
     return None, mode
 
@@ -751,9 +759,11 @@ def spawn(a):
         brief = HANDOFF_NOTE.format(path=handoff, text=paste(handoff)) + brief
     cwd = os.path.abspath(a.cwd or os.getcwd())
     wt, fresh, how = None, False, ""
+    reattached = False
     if a.worktree is not None:
         wt, fresh, how = make_worktree(a.name, a.worktree, prior["base_repo"] if prior else cwd, alive, prior)
         cwd = wt["path"]
+        reattached = how != "created"  # fresh only says the folder is new: its branch may hold work
     for path in outside_context(os.path.realpath(cwd)):
         brief = CONTEXT_NOTE.format(path=path, text=paste(path)) + brief
     try:
@@ -767,6 +777,10 @@ def spawn(a):
         if fresh:
             release(wt)  # nothing ran in it, so do not leave an unrecorded worktree behind
         raise
+    if mode != a.mode:
+        warn(f"{a.name} could not start in auto mode, which may not be available on this account or "
+             f"Claude version, so it is running in {mode} mode instead{auto_cost(mode)}. "
+             "Run herd doctor for details.")
     label = label_pane(a.name, pane, (a.label or "").strip() or a.name)
     session = session_id(started["agent"]) or startup_session(pane)
     checked = confirm_auto(a.name, pane) if session and mode == "auto" else mode
@@ -775,7 +789,7 @@ def spawn(a):
              "label": label}
     if wt:
         entry["worktree"] = wt
-        brief += WORKTREE_NOTE.format(**wt) + (REATTACH_NOTE if how != "created" else "")
+        brief += WORKTREE_NOTE.format(**wt) + (REATTACH_NOTE if reattached else "")
     text = BRIEF.format(name=a.name, brief=brief)
     if not session:
         entry["pending"] = text  # herd wait delivers it once the prompt is answered
@@ -789,7 +803,7 @@ def spawn(a):
     print(f"{a.name} started in {pane}, {where} ({mode}, {a.model or 'default model'}), session {session or 'pending'}")
     if wt:
         print(f"worktree {how}: {worktree_line(wt)}")
-        if not fresh:
+        if reattached:
             print(f"  it holds: {', '.join(unsaved(wt)) or 'nothing new'}")
     if os.path.isfile(handoff):
         print(f"handoff: brief points to {handoff}")
@@ -850,18 +864,17 @@ def clear_draft(pane):
 
 
 def cmd_wrapup(a):
-    reg = load()
+    reg, alive = synced()
     names = list(dict.fromkeys(a.names)) or list(reg)
     if not names:
         die("no subagents")
     for name in names:
         member(reg, name)
     os.makedirs(HANDOFF_DIR, exist_ok=True)
-    alive = live()
     asked = []
     for name in names:
         pane = reg[name]["pane"]
-        agent = alive.get(pane)
+        agent = locate(name, reg[name], alive)
         draft = has_draft(pane) if agent and agent["agent_status"] != "blocked" else False
         if not agent:
             print(f"{name}: gone, skipped")
@@ -1179,7 +1192,7 @@ def check_herdr():
     if not found:
         return False, f"cannot read a version from: {text.strip()[:80]}", "run herdr update"
     have = tuple(int(x) for x in found.groups())
-    return have >= MIN_HERDR, f"{version_text(have)}, needs {version_text(MIN_HERDR)} or newer", "run herdr update"
+    return have >= MIN_HERDR, f"{version_text(have)}, the oldest tested version is {version_text(MIN_HERDR)}", "run herdr update"
 
 
 def check_integration():
@@ -1239,23 +1252,19 @@ def check_transcript_format():
 
 def probe():
     """Open a throwaway Claude pane and read it, sending no prompt, so it costs no tokens and
-    leaves no transcript. Returns (auto check, input box check) as (ok, detail, fix) tuples."""
+    leaves no transcript. It starts Claude the way spawn does, so auto mode being unavailable is
+    a warning as long as the fallback works. Returns (auto check, input box check) as
+    (ok, detail, fix) tuples."""
     update = "update herd. Until then send refuses without --force"
     name = f"herd-doctor-{os.getpid()}"
     with locked(SPAWN_LOCK):
         pane = split(PRIMARY, rects(PRIMARY)[PRIMARY], os.getcwd())
         try:
-            time.sleep(1)
-            started = None
-            for _ in range(5):
-                started = start_claude(name, pane, "auto", None)
-                if started or AUTO_REFUSED.search(pane_output(pane)):
-                    break
-                time.sleep(1)
+            started, used = start_in_pane(name, pane, "auto", None)
             if not started:
                 tail = pane_output(pane).strip()[-200:]
-                return ((False, f"claude did not start with --permission-mode auto: {tail or 'no output'}",
-                         f"update Claude Code. spawn falls back to {FALLBACK_MODE} mode until then"),
+                return ((False, f"claude did not start in a test pane, in auto or {FALLBACK_MODE} mode: {tail or 'no output'}",
+                         "run claude in this folder to see what stops it, and update Claude Code if it is old"),
                         (None, "no Claude pane to read", None))
             if not (session_id(started["agent"]) or startup_session(pane)):
                 held = "Claude is held at a startup prompt in this folder, usually folder trust"
@@ -1265,12 +1274,14 @@ def probe():
             draft = has_draft(pane)
         finally:
             herdr("pane", "close", pane, check=False)
+    if used != "auto":
+        mode = used
     if mode == "auto":
         auto = True, "a test pane started in auto mode", None
     elif mode:
-        auto = (False, f"a test pane started in {mode} mode, so auto mode is not available here",
-                f"check your plan, model, and any disableAutoMode setting. herd still works: "
-                f"spawn says so and runs subagents in {mode} mode, where the user answers approval prompts")
+        auto = (WARN, f"a test pane started in {mode} mode, so auto mode is not available here",
+                f"check your Claude version, plan, model, and any disableAutoMode setting. herd still works: "
+                f"spawn says so and runs subagents in {mode} mode{auto_cost(mode)}")
     else:
         auto = False, "could not find the permission mode in a test pane's footer", \
             "update herd. Until then spawn warns that it cannot confirm auto mode"
@@ -1295,15 +1306,17 @@ def cmd_doctor(a):
     elif os.environ.get("HERD_CHILD"):
         skip = "a herd subagent cannot open panes, run this from the primary"
     results += zip(("auto mode", "input box"), [(None, skip, None)] * 2 if skip else probe())
-    failed = 0
+    failed = warned = 0
     for label, (ok, detail, fix) in results:
-        print(f"{ {True: 'PASS', False: 'FAIL', None: 'SKIP'}[ok] } {label}: {detail}")
+        print(f"{ {True: 'PASS', False: 'FAIL', None: 'SKIP', WARN: 'WARN'}[ok] } {label}: {detail}")
         if ok is False:
             failed += 1
+        warned += ok == WARN
+        if fix:
             print(f"     fix: {fix}")
     if failed:
         die(f"{failed} of {len(results)} checks failed")
-    print("herd is ready")
+    print(f"herd is ready, with {warned} warning(s)" if warned else "herd is ready")
 
 
 def main():

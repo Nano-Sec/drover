@@ -97,6 +97,31 @@ class ProjectContext(HerdCase):
         self.from_inner("a", "--cwd", self.outside)
         self.assertNotIn("HOME RULES", self.brief("a"))
 
+    def test_global_file_is_not_pasted_for_a_primary_under_claude_config(self):
+        tools = self.mkdir("home", ".claude", "tools")
+        self.write(os.path.join(self.home, ".claude", "CLAUDE.md"), "GLOBAL RULES\n")
+        self.write(os.path.join(tools, "CLAUDE.md"), "TOOL RULES\n")
+        self.ok("spawn", "a", "Do the task.", "--cwd", self.outside, cwd=tools)
+        self.assertNotIn("GLOBAL RULES", self.brief("a"))
+        self.assertIn("TOOL RULES", self.brief("a"))
+
+    def test_global_file_is_not_pasted_for_a_primary_in_the_config_folder(self):
+        config = self.mkdir("home", ".claude")
+        self.write(os.path.join(config, "CLAUDE.md"), "GLOBAL RULES\n")
+        self.ok("spawn", "a", "Do the task.", "--cwd", self.outside, cwd=config)
+        self.assertNotIn("Project context", self.brief("a"))
+
+    def test_global_file_follows_claude_config_dir(self):
+        moved = self.mkdir("home", "config")
+        old = self.mkdir("home", ".claude")
+        self.write(os.path.join(moved, "CLAUDE.md"), "GLOBAL RULES\n")
+        self.write(os.path.join(old, "CLAUDE.md"), "OLD RULES\n")
+        env = {"CLAUDE_CONFIG_DIR": moved}
+        self.ok("spawn", "a", "Do the task.", "--cwd", self.outside, cwd=moved, env=env)
+        self.assertNotIn("GLOBAL RULES", self.brief("a"))
+        self.ok("spawn", "b", "Do the task.", "--cwd", self.outside, cwd=old, env=env)
+        self.assertIn("OLD RULES", self.brief("b"))
+
     def test_long_file_is_cut(self):
         self.write(self.low, "y" * 20500)
         self.from_inner("a", "--cwd", self.outside)

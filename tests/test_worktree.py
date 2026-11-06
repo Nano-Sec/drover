@@ -264,6 +264,7 @@ class Reattach(WorktreeCase):
         self.git(self.base, "worktree", "remove", seed)
         out = self.wt("a")
         self.assertIn("reattached existing branch in a new worktree", out)
+        self.assertIn("it holds: 1 commits not on main", out)
         self.assertTrue(os.path.isfile(os.path.join(self.path("a"), "earlier.txt")))
         self.assertIn("already holds earlier work", self.brief("a"))
         self.assertFalse(self.entry("a")["worktree"]["created_branch"])

@@ -48,6 +48,11 @@ class Spawn(HerdCase):
         self.ok("spawn", "alpha", "-", stdin="line one\nline two\n")
         self.assertIn("line one\nline two", self.brief("alpha"))
 
+    def test_pane_is_labelled(self):
+        self.assertNotIn("could not label", self.spawn("alpha"))
+        self.assertEqual(self.pane("alpha")["label"], "alpha")
+        self.assertEqual(self.entry("alpha")["label"], "alpha")
+
     def test_cwd_is_used(self):
         other = self.mkdir("home", "other")
         self.spawn("alpha", "--cwd", other)
@@ -79,9 +84,15 @@ class Spawn(HerdCase):
     def test_claude_that_never_starts_closes_its_pane(self):
         self.change(lambda s: s["start"].update(alpha="fail"))
         self.assertIn("could not start claude in w1:p2, pane closed", self.refused("spawn", "alpha", "x"))
-        self.assertEqual(len(self.calls("agent", "start")), 5)
+        modes = [c[c.index("--permission-mode") + 1] for c in self.calls("agent", "start")]
+        self.assertEqual(modes, ["auto"] * 5 + ["manual"] * 2)
         self.assertNotIn("w1:p2", self.fake()["panes"])
         self.assertEqual(self.reg(), {})
+
+    def test_other_modes_have_no_fallback(self):
+        self.change(lambda s: s["start"].update(alpha="fail"))
+        self.refused("spawn", "alpha", "x", "--mode", "plan")
+        self.assertEqual(len(self.calls("agent", "start")), 5)
 
     def test_session_that_appears_just_after_start(self):
         self.change(lambda s: s["start"].update(alpha="slow"))
@@ -89,6 +100,35 @@ class Spawn(HerdCase):
         self.assertIn("session session-1", out)
         self.assertNotIn("pending", self.entry("alpha"))
         self.assertEqual(len(self.pane("alpha")["prompts"]), 1)
+
+
+class AutoMode(HerdCase):
+    def modes(self):
+        return [c[c.index("--permission-mode") + 1] for c in self.calls("agent", "start")]
+
+    def test_confirmed_from_the_first_look_at_the_footer(self):
+        self.assertNotIn("warning", self.spawn("alpha"))
+        self.assertEqual(self.entry("alpha")["mode"], "auto")
+        self.assertEqual(len(self.calls("agent", "read")), 1)  # no retries while the footer draws
+
+    def test_refused_auto_falls_back_at_once(self):
+        self.change(lambda s: s["start"].update(alpha="no_auto"))
+        out = self.spawn("alpha")
+        self.assertEqual(self.modes(), ["auto", "manual"])
+        self.assertIn("could not start in auto mode", out)
+        self.assertIn("it stops at approval prompts", out)
+        self.assertEqual(self.entry("alpha")["mode"], "manual")
+
+    def test_refusal_in_unknown_words_falls_back_after_the_retries(self):
+        self.change(lambda s: s["start"].update(alpha="no_auto_quiet"))
+        self.assertIn("could not start in auto mode", self.spawn("alpha"))
+        self.assertEqual(self.modes(), ["auto"] * 5 + ["manual"])
+        self.assertEqual(self.entry("alpha")["mode"], "manual")
+
+    def test_claude_that_starts_in_another_mode_is_reported(self):
+        self.change(lambda s: s["start"].update(alpha="manual_footer"))
+        self.assertIn("auto mode is not available for alpha", self.spawn("alpha"))
+        self.assertEqual(self.entry("alpha")["mode"], "manual")
 
 
 class HeldAtStartup(HerdCase):
@@ -194,13 +234,20 @@ class Send(HerdCase):
         self.assertIn("could not clear", self.refused("send", "a", "hi", "--force"))
         self.assertEqual(len(self.pane("a")["prompts"]), 1)
 
-    @unittest.expectedFailure
     def test_blocked_pane_is_not_answered(self):
-        """Known bug: the Enter in a prompt picks the highlighted option, so herd send to a
-        blocked pane approves it. Confirmed against real Claude: the command ran."""
+        """The Enter in a prompt picks the highlighted option, so a send would approve it.
+        Confirmed against real Claude: the command ran."""
         self.set_status("a", "blocked")
-        self.herd("send", "a", "hello")
+        self.assertIn("waiting on a prompt", self.refused("send", "a", "hello"))
         self.assertNotIn("answered", self.pane("a"))
+
+    def test_force_does_not_answer_a_blocked_pane(self):
+        self.set_status("a", "blocked")
+        self.change_pane("a", draft="half typed")
+        self.assertIn("waiting on a prompt", self.refused("send", "a", "hello", "--force"))
+        self.assertNotIn("answered", self.pane("a"))
+        self.assertEqual(self.pane("a")["keys"], [])
+        self.assertEqual(self.pane("a")["draft"], "half typed")
 
 
 class Close(HerdCase):
