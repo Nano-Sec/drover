@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """herd: run Claude subagents in visible herdr panes. See SKILL.md."""
-import argparse, glob, json, os, re, subprocess, sys, time
+import argparse, contextlib, fcntl, glob, json, os, re, shutil, subprocess, sys, time
 
 MIN_PANE_W = 60  # smallest readable Claude pane, in terminal columns and rows
 MIN_PANE_H = 14
@@ -8,7 +8,14 @@ MAX_COLS = 2     # subagent grid limits, which keep the splits even
 MAX_ROWS = 4
 MIN_SPLIT_WIDTH = 2 * MIN_PANE_W
 ANY_STATE = ["working", "blocked", "done", "idle"]
-STATE_DIR = os.path.expanduser("~/.claude/herd")
+MIN_PYTHON = (3, 9)
+MIN_HERDR = (0, 8, 0)  # the oldest version herd has been tested against
+FALLBACK_MODE = "manual"  # when auto is unavailable. Never bypassPermissions.
+AUTO_REFUSED = re.compile(r"auto mode|'auto' is invalid", re.I)  # on the screen of a pane that exited
+STATE_DIR = os.path.abspath(os.path.expanduser(os.environ.get("HERD_STATE_DIR") or "~/.claude/herd"))
+PROJECTS_DIR = os.path.abspath(os.path.expanduser(os.environ.get("HERD_PROJECTS_DIR") or "~/.claude/projects"))
+REG_LOCK = ".registry.lock"  # held for each read-change-write of a registry
+SPAWN_LOCK = ".spawn.lock"  # held for a whole spawn, and always taken before REG_LOCK
 WORKTREES = os.path.join(STATE_DIR, "worktrees")
 HANDOFFS = os.path.join(STATE_DIR, "handoffs")
 PRIMARY = os.environ.get("HERDR_PANE_ID", "")
@@ -37,6 +44,8 @@ HANDOFF_NOTE = "This continues earlier work. Here is the handoff from the last s
 
 CONTEXT_NOTE = "Project context from {path}, which your folder does not load automatically:\n\n{text}\n\n---\n\n"
 
+NO_BOX = "It may be showing a dialog, or Claude may have changed its screen."
+
 MAX_PASTE = 20000  # characters of any one file pasted into a brief
 JOB_PATIENCE = 1800  # seconds to wait on a paused pane before reporting it anyway
 
@@ -46,16 +55,26 @@ def die(msg, code=1):
     sys.exit(code)
 
 
+def warn(msg):
+    print(f"herd: warning: {msg}", file=sys.stderr)
+
+
 def herdr(*args, check=True):
-    p = subprocess.run(["herdr", *args], capture_output=True, text=True)
+    try:
+        p = subprocess.run(["herdr", *args], capture_output=True, text=True)
+    except OSError as e:
+        if check:
+            die(f"cannot run herdr: {e}")
+        return None
     if p.returncode != 0:
         if check:
             die(f"herdr {' '.join(args[:3])} failed: {(p.stderr or p.stdout).strip()[:400]}")
         return None
     try:
-        return json.loads(p.stdout).get("result", {})
+        d = json.loads(p.stdout)
     except ValueError:
         return p.stdout
+    return d.get("result", {}) if isinstance(d, dict) else p.stdout
 
 
 def load(path=REG_PATH):
@@ -73,6 +92,32 @@ def save(reg, path=REG_PATH):
     with open(tmp, "w") as f:
         json.dump(reg, f, indent=1)
     os.replace(tmp, path)
+
+
+@contextlib.contextmanager
+def locked(name):
+    """Hold an exclusive lock on a file in the state directory. The OS drops it when the process
+    ends, so a crash cannot leave it stuck. It does not nest: a second hold in one process hangs."""
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        fd = os.open(os.path.join(STATE_DIR, name), os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError as e:
+        die(f"cannot use the state directory {STATE_DIR}: {e}")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+@contextlib.contextmanager
+def editing():
+    """Change this pane's registry safely: read it fresh, yield it, then write it back.
+    Keep herdr calls out of the block, since other commands wait on this lock."""
+    with locked(REG_LOCK):
+        reg = load()
+        yield reg
+        save(reg)
 
 
 def live():
@@ -114,9 +159,9 @@ def refresh(reg, alive):
 
 def synced():
     """The registry and the live agents, reconciled."""
-    reg, alive = load(), live()
-    if refresh(reg, alive):
-        save(reg)
+    alive = live()
+    with editing() as reg:
+        refresh(reg, alive)
     return reg, alive
 
 
@@ -214,20 +259,101 @@ def text_arg(value):
     return sys.stdin.read() if value == "-" else value
 
 
-def has_draft(pane):
-    """True if someone has unsent text in the pane's input box."""
-    r = herdr("agent", "read", pane, "--source", "visible", "--format", "ansi", check=False)
-    screen = r.get("read", {}).get("text", "") if isinstance(r, dict) else (r or "")
-    if isinstance(r, dict) and not screen:
-        screen = r.get("text", "")
-    for line in reversed(screen.splitlines()[-10:]):
+def screen(pane, ansi=True):
+    """What the pane shows now, or None if it cannot be read."""
+    args = ["agent", "read", pane, "--source", "visible"] + (["--format", "ansi"] if ansi else [])
+    r = herdr(*args, check=False)
+    if isinstance(r, dict):
+        r = r.get("read", {}).get("text") or r.get("text", "")
+    return r if isinstance(r, str) else None
+
+
+def draft_in(text):
+    """Read the input box off an ansi screen: True if it holds typed text, False if it is empty,
+    None if that cannot be told. Depends on Claude drawing the box with a ❯ near the bottom."""
+    for line in reversed((text or "").splitlines()[-10:]):
         plain = re.sub(r"\x1b\[[0-9;:]*m", "", line)
         if plain.lstrip().startswith("❯"):
             rest = line.split("❯", 1)[1]
             # Dim or inverse-only content is a ghost suggestion or the cursor, not typed text.
             rest = re.sub(r"\x1b\[(?:[0-9;:]*;)?(?:2|7)m.*", "", rest)
-            return bool(re.sub(r"\x1b\[[0-9;:]*m", "", rest).strip())
-    return False
+            typed = bool(re.sub(r"\x1b\[[0-9;:]*m", "", rest).strip())
+            # A screen with no colors at all gives no way to tell a ghost suggestion from text.
+            return None if typed and "\x1b[" not in text else typed
+    return None
+
+
+def has_draft(pane):
+    """True if someone has unsent text in the pane's input box, False if it is empty, and None
+    if the box cannot be found. Callers must not treat None as empty."""
+    for attempt in range(3):
+        if attempt:
+            time.sleep(0.3)  # the screen may be mid redraw
+        state = draft_in(screen(pane))
+        if state is not None:
+            return state
+    return None
+
+
+def pane_mode(pane):
+    """The permission mode in the pane's footer, or None if there is no footer to read."""
+    for line in reversed((screen(pane, ansi=False) or "").splitlines()[-10:]):
+        found = re.search(r"\b(auto|manual|plan) mode on\b|\b(accept edits|bypass permissions) on\b", line)
+        if found:
+            return found.group(1) or {"accept edits": "acceptEdits"}.get(found.group(2), "bypassPermissions")
+    return None
+
+
+def settled_mode(pane):
+    """pane_mode, allowing a moment for a pane that has just started to draw its footer."""
+    for attempt in range(6):
+        if attempt:
+            time.sleep(0.5)
+        mode = pane_mode(pane)
+        if mode:
+            return mode
+    return None
+
+
+def warn_not_auto(name, mode):
+    warn(f"auto mode is not available for {name}, so Claude started it in {mode} mode instead. "
+         f"It will not run the way auto would{auto_cost(mode)}. Run herd doctor for details.")
+
+
+def confirm_auto(name, pane):
+    """Claude can accept --permission-mode auto and start in another mode, for example when the
+    account, model, or settings do not allow it. Say so, and return the mode it really runs in,
+    or None if the footer is hidden, as it can be by a passing hint. recheck_auto() then decides."""
+    mode = settled_mode(pane)
+    if mode and mode != "auto":
+        warn_not_auto(name, mode)
+    return mode
+
+
+def recheck_auto(name, session):
+    """Second look for a pane whose footer could not be read, once a prompt has reached it and
+    the transcript records the mode. Returns the mode if that shows it is not auto."""
+    mode = None
+    for _ in range(4):
+        time.sleep(0.5)
+        mode = transcript_mode(session)
+        if mode:
+            break
+    if not mode:
+        warn(f"could not read the permission mode of {name}, so auto mode is not confirmed. "
+             "Run herd doctor if this keeps happening.")
+    elif mode != "auto":
+        mode = {"default": "manual"}.get(mode, mode)
+        warn_not_auto(name, mode)
+        with editing() as reg:
+            if name in reg:
+                reg[name]["mode"] = mode
+        return mode
+    return None
+
+
+def auto_cost(mode):
+    return ": it stops at approval prompts, which the user must answer" if mode == "manual" else ""
 
 
 def paste(path):
@@ -264,50 +390,125 @@ def submit(pane, text):
     herdr(*args)
 
 
+class TranscriptError(Exception):
+    """A transcript exists but cannot be read, or is not in the format herd knows."""
+
+
 def transcript(session):
-    hits = glob.glob(os.path.expanduser(f"~/.claude/projects/*/{session}.jsonl"))
-    return hits[0] if hits else None
+    if not session:
+        return None
+    hits = glob.glob(os.path.join(glob.escape(PROJECTS_DIR), "*", f"{session}.jsonl"))
+    return max(hits, key=os.path.getmtime) if hits else None
+
+
+def transcript_lines(path):
+    try:
+        with open(path, errors="replace") as f:
+            return f.readlines()
+    except OSError as e:
+        raise TranscriptError(f"cannot read transcript {path}: {e.strerror or e}")
+
+
+def parse_entry(line):
+    """One transcript line as a dict, or None. A half-written last line is normal."""
+    try:
+        d = json.loads(line)
+    except ValueError:
+        return None
+    return d if isinstance(d, dict) and "type" in d else None
+
+
+def blocks(d):
+    """The content blocks of an assistant entry."""
+    msg = d.get("message")
+    content = msg.get("content") if isinstance(msg, dict) else None
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}]
+    if isinstance(content, list) and all(isinstance(c, dict) for c in content):
+        return content
+    raise TranscriptError("an assistant entry has an unknown shape")
+
+
+def message_in(path):
+    """The last assistant text in a transcript, or None if it has no reply yet. Raises
+    TranscriptError if the file cannot be read or does not look the way herd expects."""
+    lines = transcript_lines(path)
+    last, kinds, bad = None, set(), 0
+    for line in lines:
+        d = parse_entry(line)
+        if d is None:
+            continue
+        kinds.add(d["type"])
+        if d["type"] != "assistant" or d.get("isSidechain"):
+            continue
+        try:
+            parts = [c.get("text") or "" for c in blocks(d) if c.get("type") == "text"]
+        except TranscriptError:
+            bad += 1
+            continue
+        if "".join(parts).strip():
+            last = "\n".join(parts)
+    changed = f"transcript {path} is not in the format herd expects, Claude may have changed it"
+    if any(l.strip() for l in lines) and not kinds:
+        raise TranscriptError(f"{changed}: no line has a type")
+    if kinds and "assistant" not in kinds:
+        raise TranscriptError(f"{changed}, or there is no reply yet: it has no assistant entries")
+    if bad and not last:
+        raise TranscriptError(f"{changed}: {bad} assistant entries could not be read")
+    if bad:
+        warn(f"{changed}: skipped {bad} assistant entries, so this may not be the last message")
+    return last
 
 
 def last_message(session):
+    """Returns (last assistant text or None, what stopped herd reading it or None)."""
     path = transcript(session)
     if not path:
+        return None, f"no transcript found for session {session or '(none yet)'} under {PROJECTS_DIR}"
+    try:
+        return message_in(path), None
+    except TranscriptError as e:
+        return None, str(e)
+
+
+def transcript_mode(session):
+    """The permission mode the transcript last recorded, or None if it records none."""
+    path = transcript(session)
+    mode = None
+    try:
+        for line in transcript_lines(path) if path else []:
+            if '"permission-mode"' in line:
+                mode = (parse_entry(line) or {}).get("permissionMode", mode)
+    except TranscriptError:
         return None
-    last = None
-    with open(path) as f:
-        for line in f:
-            try:
-                d = json.loads(line)
-            except ValueError:
-                continue
-            if d.get("type") != "assistant" or d.get("isSidechain"):
-                continue
-            parts = [c["text"] for c in d["message"].get("content", []) if c.get("type") == "text"]
-            if parts and "".join(parts).strip():
-                last = "\n".join(parts)
-    return last
+    return mode
 
 
 def pending_jobs(session):
     """Background jobs the agent started that have not reported back yet. Agents end their
-    turn while these run, so an idle pane with jobs pending has paused, not finished."""
-    path = transcript(session) if session else None
+    turn while these run, so an idle pane with jobs pending has paused, not finished. An
+    unreadable transcript counts as none, and report() then says jobs cannot be seen."""
+    path = transcript(session)
     if not path:
         return 0
+    try:
+        lines = transcript_lines(path)
+    except TranscriptError:
+        return 0
     started, finished = [], set()
-    with open(path) as f:
-        for line in f:
-            if "<task-notification>" in line:
-                finished.update(re.findall(r"tool-use-id>([^<\\]+)", line))
-            if "run_in_background" not in line:
-                continue
-            try:
-                d = json.loads(line)
-            except ValueError:
-                continue
-            if d.get("type") == "assistant" and not d.get("isSidechain"):
-                started += [c["id"] for c in d["message"].get("content", [])
-                            if c.get("type") == "tool_use" and c.get("input", {}).get("run_in_background")]
+    for line in lines:
+        if "<task-notification>" in line:
+            finished.update(re.findall(r"tool-use-id>([^<\\]+)", line))
+        if "run_in_background" not in line:
+            continue
+        d = parse_entry(line)
+        if not d or d["type"] != "assistant" or d.get("isSidechain"):
+            continue
+        try:
+            started += [c.get("id") for c in blocks(d) if c.get("type") == "tool_use"
+                        and isinstance(c.get("input"), dict) and c["input"].get("run_in_background")]
+        except TranscriptError:
+            continue
     return len([j for j in started if j not in finished])
 
 
@@ -463,17 +664,73 @@ def deliver(name, timeout_ms):
         if not agent:
             return
         if agent["agent_status"] != "blocked" and m.get("session"):
+            auto = m.get("mode") == "auto"
+            checked = confirm_auto(name, m["pane"]) if auto else None
             submit(m["pane"], m["pending"])
-            reg = load()
-            reg[name].pop("pending", None)
-            save(reg)
+            with editing() as reg:
+                if name in reg:
+                    reg[name].pop("pending", None)
+                    reg[name]["mode"] = checked or m.get("mode")
+            if auto and not checked:
+                recheck_auto(name, m["session"])
             return
         time.sleep(2)
+
+
+def start_claude(name, pane, mode, model):
+    native = ["--permission-mode", mode, "-n", name] + (["--model", model] if model else [])
+    return herdr("agent", "start", name, "--kind", "claude", "--pane", pane,
+                 "--timeout", "45000", "--", *native, check=False)
+
+
+def pane_output(pane):
+    """Recent pane text with wraps joined. Unlike screen(), this works with no agent running."""
+    r = herdr("pane", "read", pane, "--source", "recent-unwrapped", "--lines", "30", check=False)
+    return r if isinstance(r, str) else ""
+
+
+def start_in_pane(name, pane, mode, model):
+    """Start Claude in the pane, retrying while its shell comes up. If auto mode is what stops it,
+    fall back to FALLBACK_MODE and say so. Returns (agent start result or None, mode used)."""
+    for _ in range(5):
+        time.sleep(1)
+        started = start_claude(name, pane, mode, model)
+        if started:
+            return started, mode
+        if mode == "auto" and AUTO_REFUSED.search(pane_output(pane)):
+            break
+    if mode != "auto":
+        return None, mode
+    for _ in range(2):
+        time.sleep(1)
+        started = start_claude(name, pane, FALLBACK_MODE, model)
+        if started:
+            warn(f"{name} could not start in auto mode, which may not be available on this account or "
+                 f"Claude version, so it is running in {FALLBACK_MODE} mode instead{auto_cost(FALLBACK_MODE)}. "
+                 "Run herd doctor for details.")
+            return started, FALLBACK_MODE
+    return None, mode
+
+
+def label_pane(name, pane, label):
+    """Label a new pane and return the label, or None if that failed. A pane without a label
+    still works, so this only warns. herdr reads a leading dash as an option, and has no way
+    to escape one: it keeps a -- as part of the label."""
+    if label.startswith("-") or herdr("pane", "rename", pane, label, check=False) is None:
+        warn(f"could not label the pane of {name} as {label}, carrying on without it")
+        return None
+    return label
 
 
 def cmd_spawn(a):
     if os.environ.get("HERD_CHILD"):
         die("this pane is a herd subagent, it cannot spawn more")
+    a.brief = text_arg(a.brief)  # before the lock, since stdin can take a while
+    with locked(SPAWN_LOCK):  # one at a time, so each spawn sees the panes the last one opened
+        spawn(a)
+
+
+def spawn(a):
     if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", a.name):
         die("name must match [a-z][a-z0-9_-]{0,31}")
     reg, alive = synced()
@@ -486,7 +743,7 @@ def cmd_spawn(a):
             f"Pass --worktree to reattach to it, pick another name, or run herd close {a.name} once it is merged")
     if any(x.get("name") == a.name for x in alive.values()):
         die(f"another live agent is already named {a.name}")
-    brief = text_arg(a.brief).strip()
+    brief = a.brief.strip()
     if not brief:
         die("empty brief")
     handoff = os.path.join(HANDOFFS, a.name + ".md")
@@ -499,38 +756,37 @@ def cmd_spawn(a):
         cwd = wt["path"]
     for path in outside_context(os.path.realpath(cwd)):
         brief = CONTEXT_NOTE.format(path=path, text=paste(path)) + brief
-    native = ["--permission-mode", a.mode, "-n", a.name]
-    if a.model:
-        native += ["--model", a.model]
     try:
         pane, group = place(reg, cwd, a.name, a.tab)
-        started = None
-        for _ in range(5):
-            time.sleep(1)
-            started = herdr("agent", "start", a.name, "--kind", "claude", "--pane", pane,
-                            "--timeout", "45000", "--", *native, check=False)
-            if started:
-                break
+        started, mode = start_in_pane(a.name, pane, a.mode, a.model)
         if not started:
+            tail = pane_output(pane).strip()[-400:]
             herdr("pane", "close", pane, check=False)
-            die(f"could not start claude in {pane}, pane closed")
+            die(f"could not start claude in {pane}, pane closed. Its last output:\n{tail or '(none)'}")
     except BaseException:
         if fresh:
             release(wt)  # nothing ran in it, so do not leave an unrecorded worktree behind
         raise
+    label = label_pane(a.name, pane, (a.label or "").strip() or a.name)
     session = session_id(started["agent"]) or startup_session(pane)
-    reg[a.name] = {"pane": pane, "session": session, "cwd": cwd, "mode": a.mode, "model": a.model, "group": group}
+    checked = confirm_auto(a.name, pane) if session and mode == "auto" else mode
+    mode = checked or mode
+    entry = {"pane": pane, "session": session, "cwd": cwd, "mode": mode, "model": a.model, "group": group,
+             "label": label}
     if wt:
-        reg[a.name]["worktree"] = wt
+        entry["worktree"] = wt
         brief += WORKTREE_NOTE.format(**wt) + (REATTACH_NOTE if how != "created" else "")
     text = BRIEF.format(name=a.name, brief=brief)
     if not session:
-        reg[a.name]["pending"] = text  # herd wait delivers it once the prompt is answered
-    save(reg)
+        entry["pending"] = text  # herd wait delivers it once the prompt is answered
+    with editing() as latest:
+        latest[a.name] = entry
     if session:
         submit(pane, text)
+        if not checked:
+            mode = recheck_auto(a.name, session) or mode
     where = f"tab '{group}'" if group else "the primary tab"
-    print(f"{a.name} started in {pane}, {where} ({a.mode}, {a.model or 'default model'}), session {session or 'pending'}")
+    print(f"{a.name} started in {pane}, {where} ({mode}, {a.model or 'default model'}), session {session or 'pending'}")
     if wt:
         print(f"worktree {how}: {worktree_line(wt)}")
         if not fresh:
@@ -547,7 +803,13 @@ def cmd_send(a):
     m = member(synced()[0], a.name)
     if m.get("pending"):
         die(f"{a.name} is still at a startup prompt and has not had its brief. The user must answer it first")
-    if has_draft(m["pane"]):
+    draft = has_draft(m["pane"])
+    if draft is None:
+        if not a.force:
+            die(f"warning: could not find the input box of {a.name}, so it may hold unsent text. Not sent. "
+                f"{NO_BOX} Check with the user. --force sends anyway, on top of any unsent text.")
+        warn(f"could not find the input box of {a.name}, sending anyway because of --force. {NO_BOX}")
+    elif draft:
         if not a.force:
             die(f"{a.name} has unsent text in its input box, probably the user typing. "
                 "Check with the user. --force discards it.")
@@ -557,7 +819,7 @@ def cmd_send(a):
     print(f"sent to {a.name}")
 
 
-HANDOFF_DIR = os.path.join(STATE_DIR, "handoffs")
+HANDOFF_DIR = HANDOFFS
 
 WRAPUP = """The session is ending for now, so wrap up and hand off. If you are mid-task, stop at the next safe point and do not start new work.
 
@@ -574,7 +836,10 @@ def clear_draft(pane):
     for _ in range(20):
         herdr("agent", "send-keys", pane, "ctrl+u", "backspace", check=False)
         time.sleep(0.3)
-        if not has_draft(pane):
+        state = has_draft(pane)
+        if state is None:
+            return False
+        if not state:
             return True
     return False
 
@@ -592,15 +857,20 @@ def cmd_wrapup(a):
     for name in names:
         pane = reg[name]["pane"]
         agent = alive.get(pane)
+        draft = has_draft(pane) if agent and agent["agent_status"] != "blocked" else False
         if not agent:
             print(f"{name}: gone, skipped")
         elif agent["agent_status"] == "blocked":
             print(f"{name}: blocked on a prompt, skipped. Run wrapup for it again once the prompt is answered.")
-        elif has_draft(pane) and not a.force:
+        elif draft is None and not a.force:
+            print(f"{name}: could not find its input box, skipped. {NO_BOX} --force sends anyway.")
+        elif draft and not a.force:
             print(f"{name}: unsent text in its input box, skipped. Check with the user. --force discards it.")
-        elif has_draft(pane) and not clear_draft(pane):
+        elif draft and not clear_draft(pane):
             print(f"{name}: could not clear its unsent text, skipped")
         else:
+            if draft is None:
+                warn(f"could not find the input box of {name}, sending anyway because of --force. {NO_BOX}")
             path = os.path.join(HANDOFF_DIR, f"{name}.md")
             # Move any older handoff aside, so the file existing means this wrapup wrote it.
             old = os.path.exists(path)
@@ -621,33 +891,36 @@ def cmd_wrapup(a):
         print("no panes were asked")
 
 
+def screen_tail(pane, n):
+    return "\n".join([l for l in (screen(pane, ansi=False) or "").splitlines() if l.strip()][-n:])
+
+
 def report(name, m, alive):
     agent = locate(name, m, alive)
     if m.get("worktree"):
         print(f"worktree: {worktree_line(m['worktree'])}")
     if not agent:
         print(f"{name}: " + ("closed, worktree kept" if m.get("kept") else "gone (pane or agent exited)"))
-        msg = last_message(m["session"])
+        msg, trouble = last_message(m.get("session"))
         if msg:
             print(f"--- last message ---\n{msg}")
+        elif trouble:
+            print(f"--- no last message: {trouble} ---")
         return
     status = agent["agent_status"]
     print(f"{name}: {status}")
+    if m.get("mode") == "auto" and transcript_mode(m.get("session")) not in (None, "auto"):
+        print(f"note: {name} is no longer in auto mode, so it may stop at approval prompts")
     if status == "blocked":
-        r = subprocess.run(["herdr", "agent", "read", m["pane"], "--source", "visible"],
-                           capture_output=True, text=True).stdout
-        tail = [l for l in r.splitlines() if l.strip()][-16:]
-        print("--- waiting on this prompt ---\n" + "\n".join(tail))
+        print("--- waiting on this prompt ---\n" + screen_tail(m["pane"], 16))
     elif status != "working":
-        msg = last_message(m["session"])
-        if msg or transcript(m["session"]):
-            print(f"--- final message ---\n{msg or '(none yet)'}")
+        msg, trouble = last_message(m.get("session"))
+        if trouble:
+            print(f"--- {trouble}. Background jobs cannot be seen, and this is the pane's screen, "
+                  "which may be cut off. Transcript saving may be off, or its location or format "
+                  "may have changed. Run herd doctor ---\n" + screen_tail(m["pane"], 30))
         else:
-            r = subprocess.run(["herdr", "agent", "read", m["pane"], "--source", "visible"],
-                               capture_output=True, text=True).stdout
-            tail = [l for l in r.splitlines() if l.strip()][-30:]
-            print("--- no transcript found, so background jobs cannot be seen and this is the pane's screen, "
-                  "which may be cut off. Transcript saving may be off ---\n" + "\n".join(tail))
+            print(f"--- final message ---\n{msg or '(none yet)'}")
 
 
 def cmd_wait(a):
@@ -672,7 +945,8 @@ def cmd_wait(a):
             break
         paused_at = paused_at or time.time()
         if time.time() - paused_at > JOB_PATIENCE or (deadline and time.time() >= deadline):
-            print(f"{a.name}: paused with {jobs} background job(s) still running, so this may not be its final message")
+            print(f"{a.name}: paused with {jobs} background job(s) still running, so this may not be its final message. "
+                  "If it looks finished, Claude may have changed how its transcript records jobs")
             break
         # Check back in slices, because a job can finish and wake the agent between looks.
         if herdr("agent", "wait", m["pane"], "--until", "working", "--timeout", "30000", check=False):
@@ -700,20 +974,38 @@ def cmd_status(a):
 
 
 def cmd_rename(a):
+    if (a.label is None) == (a.pane is None):
+        die("give a tab label, or --pane with a pane label, not both")
+    if not (a.label if a.pane is None else a.pane).strip():
+        die("empty label")
+    if (a.pane or "").startswith("-"):
+        die("a pane label cannot start with a dash")
     reg, alive = synced()
     agent = locate(a.name, member(reg, a.name), alive)
     if not agent:
         die(f"{a.name} is gone")
+    if a.pane is not None:
+        herdr("pane", "rename", agent["pane_id"], a.pane)
+        with editing() as latest:
+            if a.name in latest:
+                latest[a.name]["label"] = a.pane
+        print(f"pane of {a.name} labelled {a.pane}")
+        return
     tab = agent["tab_id"]
     if tab == os.environ["HERDR_TAB_ID"]:
         die(f"{a.name} is in the primary tab, which herd does not rename")
     herdr("tab", "rename", tab, a.label)
-    for n, x in reg.items():
-        other = locate(n, x, alive)
-        if other and other["tab_id"] == tab:
-            x["group"] = a.label
-    save(reg)
+    moved = [n for n, x in reg.items() if (locate(n, x, alive) or {}).get("tab_id") == tab]
+    with editing() as latest:
+        for n in moved:
+            if n in latest:
+                latest[n]["group"] = a.label
     print(f"tab renamed to {a.label}")
+
+
+def forget(name):
+    with editing() as reg:
+        reg.pop(name, None)
 
 
 def cmd_close(a):
@@ -733,7 +1025,7 @@ def cmd_close(a):
             herdr("pane", "close", m["pane"], check=False)
         w = m.get("worktree")
         if not w:
-            del reg[name]
+            forget(name)
             print(f"{name}: closed")
             continue
         if agent:
@@ -743,13 +1035,14 @@ def cmd_close(a):
                 continue
         why = release(w)  # --force never reaches this decision
         if why:
-            m["kept"] = True
+            with editing() as latest:
+                if name in latest:
+                    latest[name]["kept"] = True
             print(f"{name}: pane closed, work kept ({', '.join(why)})\n  {worktree_line(w)}\n"
                   f"  Once it is merged or dealt with, run herd close {name} again to clean up.")
         else:
-            del reg[name]
+            forget(name)
             print(f"{name}: closed, worktree removed")
-    save(reg)
 
 
 def describe(m, agent):
@@ -784,25 +1077,26 @@ def adopt(source, force):
     path = reg_path(source)
     if path == REG_PATH:
         die(f"{source} is this pane")
-    theirs = load(path)
     alive = live()
-    if not theirs:
-        print(f"herd: no registry for {source}", file=sys.stderr)
-        other_registries(alive)
-        sys.exit(1)
-    pane = os.path.basename(path)[:-len(".json")].replace("_", ":")
-    if pane in alive and not force:
-        die(f"pane {pane} still hosts a live agent, which may be using these subagents. "
-            "Pass --force only if it is not their primary")
-    reg = load()
-    clash = {n: m for n, m in theirs.items() if n in reg}
-    reg.update({n: m for n, m in theirs.items() if n not in reg})
-    save(reg)
-    if clash:
-        save(clash, path)
-        print(f"not adopted, name already in use here: {', '.join(clash)} (left in {path})")
-    else:
-        os.remove(path)
+    with locked(REG_LOCK):
+        theirs = load(path)
+        if not theirs:
+            print(f"herd: no registry for {source}", file=sys.stderr)
+            other_registries(alive)
+            sys.exit(1)
+        pane = os.path.basename(path)[:-len(".json")].replace("_", ":")
+        if pane in alive and not force:
+            die(f"pane {pane} still hosts a live agent, which may be using these subagents. "
+                "Pass --force only if it is not their primary")
+        reg = load()
+        clash = {n: m for n, m in theirs.items() if n in reg}
+        reg.update({n: m for n, m in theirs.items() if n not in reg})
+        save(reg)
+        if clash:
+            save(clash, path)
+            print(f"not adopted, name already in use here: {', '.join(clash)} (left in {path})")
+        else:
+            os.remove(path)
     print(f"adopted {len(theirs) - len(clash)} subagents from {pane}")
 
 
@@ -824,6 +1118,8 @@ def cmd_resume(a):
         held = agent and m.get("pending")
         groups.setdefault("running" if held else state, []).append(name)
         print(f"{name:<20} {state:<8} {m['pane']:<10} {m['cwd']}")
+        if m.get("label"):
+            print(f"  label: {m['label']}")
         if held:
             print("  brief not delivered: held at a startup prompt that the user must answer")
         w = m.get("worktree")
@@ -851,8 +1147,162 @@ def cmd_resume(a):
         print(f"Clear them with: {h} close {' '.join(stale)}")
 
 
-def main():
+def output(*cmd):
+    """Stdout of a command, or None if it fails or is not installed."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True)
+    except OSError:
+        return None
+    return p.stdout if p.returncode == 0 else None
+
+
+def version_text(v):
+    return ".".join(str(x) for x in v)
+
+
+def check_python():
+    ok = sys.version_info >= MIN_PYTHON
+    return ok, f"{version_text(sys.version_info[:3])}, needs {version_text(MIN_PYTHON)} or newer", \
+        f"install Python {version_text(MIN_PYTHON)} or newer as python3"
+
+
+def check_herdr():
+    text = output("herdr", "--version")
+    if text is None:
+        return False, "herdr is not on PATH", "install herdr, then open a new shell"
+    found = re.search(r"(\d+)\.(\d+)\.(\d+)", text)
+    if not found:
+        return False, f"cannot read a version from: {text.strip()[:80]}", "run herdr update"
+    have = tuple(int(x) for x in found.groups())
+    return have >= MIN_HERDR, f"{version_text(have)}, needs {version_text(MIN_HERDR)} or newer", "run herdr update"
+
+
+def check_integration():
+    fix = "run herdr integration install claude, then restart Claude"
+    text = output("herdr", "integration", "status")
+    if text is None:
+        return False, "herdr integration status failed", fix
+    found = re.search(r"^claude:\s*(.+)$", text, re.M)
+    state = found.group(1).strip() if found else "not listed"
+    return state.startswith("current"), state, fix
+
+
+def check_claude():
+    path = shutil.which("claude")
+    if not path:
+        return False, "claude is not on PATH", "install Claude Code, then open a new shell"
+    return True, (output("claude", "--version") or path).strip(), None
+
+
+def check_inside():
     if os.environ.get("HERDR_ENV") != "1" or not PRIMARY:
+        return False, "not running inside a herdr pane", "start herdr, then run this from one of its panes"
+    if herdr("agent", "list", check=False) is None:
+        return False, f"pane {PRIMARY}, but the herdr server cannot be reached", "check herdr status, then restart herdr"
+    return True, f"pane {PRIMARY}", None
+
+
+def check_transcript_root():
+    fix = ("start Claude once so it creates the folder. If Claude keeps its files elsewhere, "
+           "for example through CLAUDE_CONFIG_DIR, set HERD_PROJECTS_DIR to its projects folder")
+    if not os.path.isdir(PROJECTS_DIR):
+        return False, f"{PROJECTS_DIR} does not exist", fix
+    return True, PROJECTS_DIR, None
+
+
+def check_transcript_format():
+    """Read this pane's own session if it has one, then recent files. A session partway through
+    a turn may hold no text yet, so one file with no message proves nothing either way."""
+    r = herdr("agent", "list", check=False) if PRIMARY else None
+    agents = r.get("agents", []) if isinstance(r, dict) else []
+    mine = next((a for a in agents if a["pane_id"] == PRIMARY), None)
+    own = transcript(session_id(mine)) if mine else None
+    found = glob.glob(os.path.join(glob.escape(PROJECTS_DIR), "*", "*.jsonl"))
+    recent = sorted(found, key=os.path.getmtime, reverse=True)[:5]
+    trouble = None
+    for path in ([own] if own else []) + recent:
+        try:
+            if message_in(path):
+                return True, f"read the last message of {path}", None
+        except TranscriptError as e:
+            trouble = str(e)
+    if trouble:
+        return False, trouble, ("update herd. Until then results fall back to the pane's screen, "
+                                "and background jobs cannot be seen")
+    return None, "no finished transcripts yet, so there is nothing to check", None
+
+
+def probe():
+    """Open a throwaway Claude pane and read it, sending no prompt, so it costs no tokens and
+    leaves no transcript. Returns (auto check, input box check) as (ok, detail, fix) tuples."""
+    update = "update herd. Until then send refuses without --force"
+    name = f"herd-doctor-{os.getpid()}"
+    with locked(SPAWN_LOCK):
+        pane = split(PRIMARY, rects(PRIMARY)[PRIMARY], os.getcwd())
+        try:
+            time.sleep(1)
+            started = None
+            for _ in range(5):
+                started = start_claude(name, pane, "auto", None)
+                if started or AUTO_REFUSED.search(pane_output(pane)):
+                    break
+                time.sleep(1)
+            if not started:
+                tail = pane_output(pane).strip()[-200:]
+                return ((False, f"claude did not start with --permission-mode auto: {tail or 'no output'}",
+                         f"update Claude Code. spawn falls back to {FALLBACK_MODE} mode until then"),
+                        (None, "no Claude pane to read", None))
+            if not (session_id(started["agent"]) or startup_session(pane)):
+                held = "Claude is held at a startup prompt in this folder, usually folder trust"
+                fix = "run this from a folder you have already trusted"
+                return (None, f"{held}. {fix}", None), (None, f"{held}. {fix}", None)
+            mode = settled_mode(pane)
+            draft = has_draft(pane)
+        finally:
+            herdr("pane", "close", pane, check=False)
+    if mode == "auto":
+        auto = True, "a test pane started in auto mode", None
+    elif mode:
+        auto = (False, f"a test pane started in {mode} mode, so auto mode is not available here",
+                f"check your plan, model, and any disableAutoMode setting. herd still works: "
+                f"spawn says so and runs subagents in {mode} mode, where the user answers approval prompts")
+    else:
+        auto = False, "could not find the permission mode in a test pane's footer", \
+            "update herd. Until then spawn warns that it cannot confirm auto mode"
+    if draft is False:
+        box = True, "found the empty input box in a test pane", None
+    elif draft:
+        box = False, "an empty input box reads as holding text, so Claude's colors may have changed", update
+    else:
+        box = False, "could not find the input box in a test pane, so Claude's screen may have changed", update
+    return auto, box
+
+
+def cmd_doctor(a):
+    results = [("python", check_python()), ("herdr", check_herdr()),
+               ("claude integration", check_integration()), ("claude", check_claude()),
+               ("inside herdr", check_inside()), ("transcript location", check_transcript_root()),
+               ("transcript format", check_transcript_format())]
+    needed = dict(results)
+    skip = None
+    if not all(needed[k][0] for k in ("inside herdr", "claude", "herdr")):
+        skip = "needs herdr and claude working, see above"
+    elif os.environ.get("HERD_CHILD"):
+        skip = "a herd subagent cannot open panes, run this from the primary"
+    results += zip(("auto mode", "input box"), [(None, skip, None)] * 2 if skip else probe())
+    failed = 0
+    for label, (ok, detail, fix) in results:
+        print(f"{ {True: 'PASS', False: 'FAIL', None: 'SKIP'}[ok] } {label}: {detail}")
+        if ok is False:
+            failed += 1
+            print(f"     fix: {fix}")
+    if failed:
+        die(f"{failed} of {len(results)} checks failed")
+    print("herd is ready")
+
+
+def main():
+    if sys.argv[1:2] != ["doctor"] and (os.environ.get("HERDR_ENV") != "1" or not PRIMARY):
         die("not running inside herdr")
     p = argparse.ArgumentParser(prog="herd")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -863,6 +1313,7 @@ def main():
     s.add_argument("--mode", default="auto", help="auto (default), manual, acceptEdits, plan")
     s.add_argument("--cwd")
     s.add_argument("--tab", metavar="LABEL", help="run in a tab with this label, shared by agents using the same label")
+    s.add_argument("--label", metavar="TEXT", help="label for the pane, default the agent's name")
     s.add_argument("--worktree", nargs="?", const="", metavar="BRANCH",
                    help="run in a git worktree of the --cwd repo on BRANCH (default herd/<name>), reattaching if it exists")
     s.set_defaults(fn=cmd_spawn)
@@ -886,7 +1337,8 @@ def main():
     s.set_defaults(fn=cmd_status)
     s = sub.add_parser("rename")
     s.add_argument("name")
-    s.add_argument("label")
+    s.add_argument("label", nargs="?", help="new label for the tab holding this subagent")
+    s.add_argument("--pane", metavar="LABEL", help="label this subagent's pane instead, which also works in the primary tab")
     s.set_defaults(fn=cmd_rename)
     s = sub.add_parser("close")
     s.add_argument("names", nargs="*")
@@ -897,6 +1349,8 @@ def main():
     s.add_argument("--from", dest="source", metavar="PANE", help="adopt the registry of another pane")
     s.add_argument("--force", action="store_true", help="adopt even if that pane hosts a live agent")
     s.set_defaults(fn=cmd_resume)
+    s = sub.add_parser("doctor", help="check that herd can run here, and say how to fix what fails")
+    s.set_defaults(fn=cmd_doctor)
     a = p.parse_args()
     a.fn(a)
 
