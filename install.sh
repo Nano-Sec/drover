@@ -17,6 +17,11 @@ case "${1:-}" in
       echo "No herd skill at $dest, nothing to remove."
       exit 0
     fi
+    if [ -L "$dest" ]; then
+      rm "$dest"
+      echo "Removed the link at $dest. The files it pointed to are untouched."
+      exit 0
+    fi
     rm -f "$dest/SKILL.md" "$dest/herd"
     rmdir "$dest" 2>/dev/null || echo "Left $dest in place, it holds other files."
     echo "Removed herd from $dest. Subagent records and handoffs in ~/.claude/herd are untouched."
