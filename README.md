@@ -17,7 +17,7 @@ It is for developers who already use Claude Code, want a few agents running at o
 
 ## Requirements
 
-- [herdr](https://herdr.dev) 0.8.0 or newer, with its Claude integration: `herdr integration install claude`
+- [herdr](https://herdr.dev) 0.8.0 or newer (the oldest tested version), with its Claude integration: `herdr integration install claude`
 - Claude Code, run from inside a herdr pane
 - Python 3.9 or newer as `python3`. There are no other dependencies.
 - git, for worktrees
@@ -149,7 +149,7 @@ The last two open a throwaway Claude pane and close it again. They send no promp
 
 You can run `herd doctor` outside herdr too, to check what is installed. The inside herdr check fails there, so it exits with an error.
 
-If you set `CLAUDE_CONFIG_DIR`, set `HERD_PROJECTS_DIR` to Claude's projects folder so herd can find transcripts. Set `HERD_STATE_DIR` to keep herd's records, worktrees, and handoffs somewhere other than `~/.claude/herd`.
+herd finds transcripts under `CLAUDE_CONFIG_DIR` if you set it, and `HERD_PROJECTS_DIR` overrides that. Set `HERD_STATE_DIR` to keep herd's records, worktrees, and handoffs somewhere other than `~/.claude/herd`.
 
 ## Permissions and trust
 
@@ -201,6 +201,8 @@ Use herd if you want to stay in one session and work alongside a few agents, ste
 - **No nesting.** A subagent cannot spawn its own subagents.
 - **Context is not inherited.** Subagents do not see your conversation, only the brief. A pane loads `CLAUDE.md` from its own folder and parents, and herd pastes in the primary's files if the pane starts elsewhere, up to 20,000 characters each. The primary's memory is not passed to panes, so anything needed from it must go in the brief.
 - **Paused panes.** `wait` treats an idle pane with background jobs still running as paused, and holds for up to 30 minutes per pause before reporting anyway.
+- **Some background jobs are invisible or slow to clear.** A job started with a plain shell `&` leaves no trace in the transcript, so `wait` can return while it runs. A background Agent job stopped with TaskStop, or a job killed by a restart, may count as running until the 30 minute limit passes.
+- **Failed reattach.** If `spawn` fails while reattaching a branch that holds commits, the worktree stays on disk without a record. Nothing is lost, and the next spawn with `--worktree` finds it.
 - **Stashes do not count as unsaved.** `herd close` can remove a worktree whose only unsaved work is a `git stash`. The stash stays in the repo's stash list.
 - **Ignored files always keep a worktree.** Anything ignored, such as `node_modules`, keeps the worktree on close, even if all the work is merged. Delete those files, then run `herd close` again.
 - **Reused branches are kept.** herd only deletes branches it created. A branch that already existed is never deleted, and while it has commits not on the base branch, its worktree stays too.

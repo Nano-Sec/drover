@@ -132,6 +132,14 @@ class Wrapup(HerdCase):
         self.close_pane_outside("c")
         self.assertIn("for each of: a\n", self.ok("wrapup"))
 
+    def test_pane_without_its_brief_is_skipped(self):
+        self.settled("a")
+        reg = self.reg()
+        reg["a"]["pending"] = "the brief"
+        self.save_reg(reg)
+        self.assertIn("a: has not had its brief yet", self.ok("wrapup", "a"))
+        self.assertEqual(len(self.told("a")), 0)
+
     def test_moved_pane_is_not_called_gone(self):
         self.settled("a")
         new = self.move_pane("a")

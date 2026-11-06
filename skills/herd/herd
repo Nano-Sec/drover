@@ -904,6 +904,8 @@ def cmd_wrapup(a):
             print(f"{name}: gone, skipped")
         elif agent["agent_status"] == "blocked":
             print(f"{name}: blocked on a prompt, skipped. Run wrapup for it again once the prompt is answered.")
+        elif reg[name].get("pending"):
+            print(f"{name}: has not had its brief yet, skipped. It has no work to hand off.")
         elif draft is None and not a.force:
             print(f"{name}: could not find its input box, skipped. {NO_BOX} --force sends anyway.")
         elif draft and not a.force:
