@@ -1,0 +1,31 @@
+{
+ "id": "cli:agent:list",
+ "result": {
+  "agents": [
+   {
+    "agent": "claude",
+    "agent_session": {
+     "agent": "claude",
+     "kind": "id",
+     "source": "herdr:claude",
+     "value": "00000000-0000-4000-8000-000000000000"
+    },
+    "agent_status": "working",
+    "cwd": "/home/user/project",
+    "focused": false,
+    "foreground_cwd": "/home/user/project",
+    "interactive_ready": true,
+    "name": "x1",
+    "pane_id": "w1:p2",
+    "revision": 7,
+    "state_change_seq": 4,
+    "tab_id": "w1:t1",
+    "terminal_id": "term_65f9afa8401452",
+    "terminal_title": "◑ x1",
+    "terminal_title_stripped": "◑ x1",
+    "workspace_id": "w1"
+   }
+  ],
+  "type": "agent_list"
+ }
+}

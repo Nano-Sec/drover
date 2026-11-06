@@ -1,0 +1,23 @@
+{
+ "id": "cli:agent:list",
+ "result": {
+  "agents": [
+   {
+    "agent": "claude",
+    "agent_status": "blocked",
+    "cwd": "/tmp/project",
+    "focused": false,
+    "foreground_cwd": "/tmp/project",
+    "interactive_ready": true,
+    "name": "held",
+    "pane_id": "w1:p4",
+    "revision": 0,
+    "state_change_seq": 7,
+    "tab_id": "w1:t1",
+    "terminal_id": "term_65f9afbc612134",
+    "workspace_id": "w1"
+   }
+  ],
+  "type": "agent_list"
+ }
+}
