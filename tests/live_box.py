@@ -14,7 +14,7 @@ def clean_env():
 
 
 class Box:
-    def __init__(self, helper, name=None, cols=200, rows=60, cwd=None):
+    def __init__(self, helper, name=None, cols=200, rows=60, cwd=None, extra_env=None):
         self.helper = helper
         self.name = name or f"herdlive{os.getpid()}"
         if self.name == "default":
@@ -25,7 +25,7 @@ class Box:
         config = os.path.join(self.tmp, "herdr.toml")
         with open(config, "w") as f:
             f.write("[ui.sound]\nenabled = false\n")
-        self.base = {**clean_env(), "HERDR_CONFIG_PATH": config}
+        self.base = {**clean_env(), **(extra_env or {}), "HERDR_CONFIG_PATH": config}
         self.pid = None
         try:
             self._launch(cols, rows)
@@ -88,14 +88,15 @@ class Box:
             raise RuntimeError(f"herdr {' '.join(args[:3])}: {r.stderr.strip()[:300]}")
         return json.loads(r.stdout)["result"]
 
-    def h(self, *args, cwd=None, stdin=None, timeout=300):
-        """Run the helper as the primary, returning (exit code, stdout plus stderr)."""
-        r = subprocess.run([self.helper, *args], env=self.herd_env, capture_output=True, text=True,
+    def h(self, *args, cwd=None, stdin=None, timeout=300, primary=None):
+        """Run the helper as the primary, or as another pane, returning (exit code, stdout plus stderr)."""
+        env = {**self.herd_env, "HERDR_PANE_ID": primary or self.primary}
+        r = subprocess.run([self.helper, *args], env=env, capture_output=True, text=True,
                            cwd=cwd or self.cwd, input=stdin, timeout=timeout)
         return r.returncode, r.stdout + r.stderr
 
-    def registry(self):
-        path = os.path.join(self.state, self.primary.replace(":", "_") + ".json")
+    def registry(self, primary=None):
+        path = os.path.join(self.state, (primary or self.primary).replace(":", "_") + ".json")
         try:
             with open(path) as f:
                 return json.load(f)
