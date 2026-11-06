@@ -11,8 +11,11 @@ from tests.harness import HerdCase, fixture
 
 TRANSCRIPTS = ["background_running.jsonl", "background_finished.jsonl", "background_stopped.jsonl",
                "background_moved.jsonl", "background_moved_finished.jsonl"]
-EMPTY_BOX = ["idle_empty", "idle_shell_running", "synthetic_ghost_suggestion", "synthetic_cursor_only"]
-TYPED_BOX = ["draft_one_line", "draft_two_lines", "draft_long_scrolled"]
+EMPTY_BOX = ["idle_empty", "idle_shell_running", "synthetic_ghost_suggestion", "synthetic_cursor_only",
+             "synthetic_footer_text"]
+TYPED_BOX = ["draft_one_line", "draft_two_lines", "draft_long_scrolled", "draft_empty_first_line",
+             "draft_box_cut_off", "synthetic_blank_window"]
+NO_BOX = ["draft_box_off_screen", "synthetic_old_prompt_above", "synthetic_box_cut_off_empty"]
 
 
 def herdr_sample(name):
@@ -143,6 +146,26 @@ class Screens(HerdCase):
         for name in TYPED_BOX:
             self.show(name)
             self.assertIn("unsent text", self.refused("send", "a", "hi"), name)
+
+    def test_box_out_of_view_refuses_a_message(self):
+        for name in NO_BOX:
+            self.show(name)
+            self.assertIn("could not find the input box", self.refused("send", "a", "hi"), name)
+        self.assertEqual(len(self.pane("a")["prompts"]), 1)
+
+    def test_force_clears_a_draft_under_an_empty_line(self):
+        self.change_pane("a", draft="\n  lower line")
+        self.assertIn("unsent text", self.refused("send", "a", "hi"))
+        self.ok("send", "a", "hi", "--force")
+        self.assertEqual(self.pane("a")["prompts"][-1], "hi")
+
+    def test_force_gives_up_on_a_line_that_stays_below_the_cursor(self):
+        self.show("draft_empty_first_line")
+        self.assertIn("could not clear", self.refused("send", "a", "hi", "--force"))
+        self.assertEqual(len(self.pane("a")["prompts"]), 1)
+        keys = self.pane("a")["keys"]
+        self.assertEqual(len(keys), 20)
+        self.assertIn("ctrl+k", keys[0], "nothing deletes the lines below the cursor")
 
     def test_permission_prompt_is_shown(self):
         self.show("permission_prompt")
