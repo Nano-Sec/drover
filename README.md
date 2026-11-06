@@ -102,12 +102,13 @@ Claude normally runs these for you, so you rarely need to type them. They do all
 
 | Command | What it does |
 | --- | --- |
-| `herd spawn <name> "<brief>"` | Start a subagent. Options: `--model`, `--mode`, `--cwd`, `--tab "<label>"`, `--worktree [branch]`. |
-| `herd send <name> "<message>"` | Send a message to a subagent, even mid-task. |
+| `herd spawn <name> "<brief>"` | Start a subagent. Options: `--model`, `--mode`, `--cwd`, `--tab "<label>"`, `--label "<text>"`, `--worktree [branch]`. |
+| `herd send <name> "<message>"` | Send a message to a subagent, even mid-task. Refused while the pane waits on a prompt, even with `--force`. Also refused if the pane holds unsent text or its input box cannot be found, unless you pass `--force`. |
 | `herd wait <name>` | Block until it settles, then print its final message or the prompt it is stuck on. |
 | `herd result <name>` | Print the same output without waiting. |
 | `herd status` | Show the window size, how many subagents fit per tab, and each subagent's state. |
-| `herd rename <name> "<label>"` | Rename the tab holding a subagent. |
+| `herd rename <name> "<label>"` | Rename the tab holding a subagent. Refused in the primary's tab. |
+| `herd rename <name> --pane "<label>"` | Relabel a subagent's pane, in any tab. |
 | `herd wrapup [names...]` | Ask subagents to commit and write a handoff. Defaults to all of them. |
 | `herd close <name>` or `--all` | Close panes. Skips working or blocked panes unless you pass `--force`. |
 | `herd resume [--from <pane-id>]` | After a restart, reconcile state and list the waits to start again. |
@@ -115,9 +116,22 @@ Claude normally runs these for you, so you rarely need to type them. They do all
 
 Pass `-` as the brief or message to read it from stdin.
 
+### Pane labels
+
+Each pane gets a label, which is the agent's name unless spawn is given `--label`. The primary is told to write short labels naming the work. herdr shows the label on the pane's border.
+
+We suggest turning on agent labels too, so panes without a label, such as the primary, also show who is in them. In herdr's `config.toml`:
+
+```toml
+[ui]
+show_agent_labels_on_pane_borders = true
+```
+
+herd's own labels show with this on or off, as long as herdr's pane borders are on, which is the default.
+
 ### herd doctor
 
-`herd doctor` prints PASS, FAIL, or SKIP for each check, with a fix for each failure. It exits with an error if anything failed.
+`herd doctor` prints PASS, FAIL, or SKIP for each check, with a fix for each failure. It exits with an error if anything failed. A warning is not a failure.
 
 | Check | What it looks at |
 | --- | --- |
@@ -127,25 +141,25 @@ Pass `-` as the brief or message to read it from stdin.
 | claude | `claude` is on your PATH. |
 | inside herdr | You are in a herdr pane and the server answers. |
 | transcript location | Claude's transcript folder exists. |
-| transcript format | herd can still read a recent transcript. |
-| auto mode | A test pane really starts in auto mode. |
+| transcript format | herd can still read a recent transcript. Skipped if there are no finished transcripts yet. |
+| auto mode | A test pane really starts in auto mode. If auto mode is unavailable this is a warning, because herd still works: spawn says so and runs subagents in manual mode. |
 | input box | herd can still read Claude's input box in that test pane. |
 
-The last two open a throwaway Claude pane and close it again. They send no prompt, so they use no tokens. They are skipped outside herdr, inside a subagent pane, or if Claude is held at a trust prompt in that folder.
+The last two open a throwaway Claude pane and close it again. They send no prompt, so they use no tokens. They are skipped if the herdr, claude, or inside herdr check failed, inside a subagent pane, or if Claude is held at a trust prompt in that folder.
 
-You can run `herd doctor` outside herdr too, to check what is installed.
+You can run `herd doctor` outside herdr too, to check what is installed. The inside herdr check fails there, so it exits with an error.
 
-If you set `CLAUDE_CONFIG_DIR`, set `HERD_PROJECTS_DIR` to Claude's projects folder so herd can find transcripts.
+If you set `CLAUDE_CONFIG_DIR`, set `HERD_PROJECTS_DIR` to Claude's projects folder so herd can find transcripts. Set `HERD_STATE_DIR` to keep herd's records, worktrees, and handoffs somewhere other than `~/.claude/herd`.
 
 ## Permissions and trust
 
 **Panes default to auto mode.** Each subagent starts with `--permission-mode auto`, so it works without stopping for routine approvals. Claude's auto mode decides what is allowed, not herd. You are starting agents that act on their own in the folder you give them, so spawn them where you would be comfortable running Claude that way. Use `--mode manual` to get approval prompts instead. `--mode` also accepts `acceptEdits` and `plan`.
 
-If auto mode is not available to you, for example because of your plan or a setting, Claude starts the pane in another mode. herd tells you when that happens. That pane then stops at approval prompts for you to answer.
+If auto mode is not available to you, for example because of your plan or a setting, herd warns you and the pane runs in manual mode, or whichever mode Claude started it in. That pane then stops at approval prompts for you to answer.
 
 **herd never accepts a trust dialog.** Claude asks once for each git root it does not trust yet. When a new pane hits that prompt, herd holds the brief and tells you which pane needs you. Only you can answer it. herd does not send keys to the dialog or edit `~/.claude.json`. Once you accept, herd delivers the brief. If you decline, the subagent is reported as gone.
 
-**herd does not approve prompts for you.** If a subagent stops at a permission prompt, it shows as blocked, and the primary tells you what it is asking. Claude will only answer on your behalf if you tell it to.
+**herd does not approve prompts for you.** If a subagent stops at a permission prompt, it shows as blocked, and the primary tells you what it is asking. You answer in that pane. `herd send` is refused while a pane is blocked, even with `--force`, because its Enter would answer the prompt.
 
 ## Worktrees and handoffs
 
@@ -154,7 +168,7 @@ Subagents share a folder unless you say otherwise. If two might edit the same re
 - The default branch is `herd/<name>`, and the checkout lives at `~/.claude/herd/worktrees/<repo>/<name>`.
 - A worktree starts from the last commit, so uncommitted changes and ignored files such as `.env` are not in it.
 - Subagents commit there. They are told not to merge or push.
-- `herd close` removes a worktree and its branch only if nothing would be lost. Uncommitted changes, ignored files, or commits not on the base branch all keep it, and `--force` does not change that.
+- `herd close` removes a worktree, and the branch if herd created it, only if nothing would be lost. Uncommitted changes, ignored files, or commits not on the base branch all keep it, and `--force` does not change that.
 - Spawning the same name with `--worktree` reattaches to kept work.
 
 `herd wrapup` asks each subagent to commit to its branch and write a handoff to `~/.claude/herd/handoffs/<name>.md`, with its status, decisions, next steps, and open questions. The file sits outside the repo, so it stays out of pull requests and survives worktree removal. If you spawn that name again later, herd pastes the handoff into the new brief, and the work carries on.
@@ -185,8 +199,12 @@ Use herd if you want to stay in one session and work alongside a few agents, ste
 - **Limited panes per tab.** Between 1 and 8 fit, depending on window size. Past that, herd opens more tabs.
 - **Token cost.** Each pane is a full session with its own context and tokens. Idle panes get costlier to resume once the prompt cache expires, so close them when done.
 - **No nesting.** A subagent cannot spawn its own subagents.
-- **Context is not inherited.** Subagents do not see your conversation, only the brief. A pane loads `CLAUDE.md` from its own folder and parents, and herd pastes in the primary's files if the pane starts elsewhere, up to 20,000 characters each. Claude's per-folder memory is not passed on.
+- **Context is not inherited.** Subagents do not see your conversation, only the brief. A pane loads `CLAUDE.md` from its own folder and parents, and herd pastes in the primary's files if the pane starts elsewhere, up to 20,000 characters each. The primary's memory is not passed to panes, so anything needed from it must go in the brief.
 - **Paused panes.** `wait` treats an idle pane with background jobs still running as paused, and holds for up to 30 minutes per pause before reporting anyway.
+- **Stashes do not count as unsaved.** `herd close` can remove a worktree whose only unsaved work is a `git stash`. The stash stays in the repo's stash list.
+- **Ignored files always keep a worktree.** Anything ignored, such as `node_modules`, keeps the worktree on close, even if all the work is merged. Delete those files, then run `herd close` again.
+- **Reused branches are kept.** herd only deletes branches it created. A branch that already existed is never deleted, and while it has commits not on the base branch, its worktree stays too.
+- **Pane labels cannot start with a dash.** herdr would read one as an option.
 - **Pane records are per primary.** State in `~/.claude/herd` is keyed by the primary's pane. After a restart in a different pane, use `herd resume --from <pane-id>`.
 
 ## License

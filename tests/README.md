@@ -2,6 +2,8 @@
 
 ## Fast tests
 
+Run these from the repo root:
+
 ```bash
 python3 -m unittest
 ```
