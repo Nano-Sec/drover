@@ -25,4 +25,4 @@ HERD_LIVE=1 HERD_TEST_TRUSTED_REPO=/path/to/repo python3 -m unittest tests.test_
 
 These use real herdr and real Claude on haiku, so they spend tokens. They run in a throwaway herdr session with sound off and the registry in a temp folder, and they drop every `HERDR_`, `HERD_` and `CLAUDE` variable. The same `formats.py` checks run on real output, so a format change fails here first.
 
-Claude must already trust the folder it starts in. The tests never answer the trust prompt: plain tests skip if Claude stops at it. Worktree tests need `HERD_TEST_TRUSTED_REPO`, a git repo you have already trusted, and skip without it. They add a `herd/live-wt<pid>` branch and a worktree during the test, and remove both.
+Claude must already trust the folder it starts in. The tests never answer the trust prompt: plain tests skip if Claude stops at it. Worktree tests need `HERD_TEST_TRUSTED_REPO`, a git repo you have already trusted, and skip without it. They add temporary `herd/live-wt<pid>` branches and worktrees during the test, and remove them.
