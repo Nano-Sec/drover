@@ -18,6 +18,7 @@ class Doctor(HerdCase):
         self.assertIn("PASS auto mode: a test pane started in auto mode", out)
         self.assertIn("PASS input box", out)
         self.assertTrue(out.rstrip().endswith("herd is ready"), out)
+        self.assertNotIn("fix:", out)
 
     def test_test_pane_is_closed(self):
         self.ok("doctor")
@@ -28,6 +29,7 @@ class Doctor(HerdCase):
         self.start("no_auto")
         out = self.ok("doctor")
         self.assertIn("WARN auto mode: a test pane started in manual mode", out)
+        self.assertIn("fix: check your Claude version", out)
         self.assertIn("it stops at approval prompts", out)
         self.assertIn("PASS input box", out)
         self.assertIn("herd is ready, with 1 warning(s)", out)

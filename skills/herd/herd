@@ -1309,10 +1309,9 @@ def cmd_doctor(a):
     failed = warned = 0
     for label, (ok, detail, fix) in results:
         print(f"{ {True: 'PASS', False: 'FAIL', None: 'SKIP', WARN: 'WARN'}[ok] } {label}: {detail}")
-        if ok is False:
-            failed += 1
+        failed += ok is False
         warned += ok == WARN
-        if fix:
+        if ok is False or ok == WARN:
             print(f"     fix: {fix}")
     if failed:
         die(f"{failed} of {len(results)} checks failed")
