@@ -1,0 +1,31 @@
+
+[0m[38;2;215;119;87m ▐[0m[38;2;215;119;87m[48;2;0;0;0m▛███▛█   [0m[1mClaude Code [0m[38;2;153;153;153mv2.1.319[0m
+[0m[38;2;215;119;87m▝▜[0m[38;2;215;119;87m[48;2;0;0;0m█████[0m[38;2;215;119;87m█▀  [0m[38;2;153;153;153mHaiku 5.5 · Claude Pro[0m
+[0m[38;2;215;119;87m ▝▝   ▝▝   [0m[38;2;153;153;153m~/project[0m
+
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mYou are a subagent named p, running in your own herdr pane. A [0m[48;2;55;55;55m     [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mprimary Claude session delegated this task to you, and the user [0m[48;2;55;55;55m   [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mcan watch and message you here directly. Treat messages in this [0m[48;2;55;55;55m   [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mpane as coming from the user or the primary.[0m[48;2;55;55;55m                       [0m
+[0m[48;2;55;55;55m                                                                     [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mRules: do the task yourself and do not start further subagents or [0m[48;2;55;55;55m [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mpanes. The primary reads only your final message, so end with a [0m[48;2;55;55;55m   [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mcomplete, self-contained report of what you did and found, [0m[48;2;55;55;55m        [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mincluding file paths.[0m[48;2;55;55;55m                                              [0m
+[0m[48;2;55;55;55m                                                                     [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mTask:[0m[48;2;55;55;55m                                                              [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mReply with exactly READY. No tools.[0m[48;2;55;55;55m                                [0m
+
+[0m[38;2;255;255;255m⏺ [0mREADY
+
+[0m[38;2;153;153;153m✻ Cooked for 1s · done 12:28 AM[0m
+
+
+
+                                              [0m[38;2;153;153;153mctrl+g to edit in Vim[0m
+[0m[38;2;136;136;136m───────────────────────────────────────────────────────────────── p ─[0m
+❯ 
+  second line only
+[0m[38;2;136;136;136m─────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;153;153;153mpaste again to expand[0m

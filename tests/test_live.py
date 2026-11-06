@@ -182,18 +182,14 @@ class Plain(LiveCase):
         self.assertIn("CLEARED_OK", self.wait("live-d"))
         self.assertNotIn("DRAFT_", self.transcript("live-d"))
 
-    @unittest.expectedFailure
     def test_draft_under_an_empty_first_line_is_guarded(self):
-        """Known bug: draft_in reads only the ❯ line, so text below an empty one counts as no draft."""
         pane = self.ready("live-e")
         self.type_draft(pane, "", "DRAFT_LOW")
         self.assertEqual(self.input_box(pane), ["", "DRAFT_LOW"])
         code, out = self.box.h("send", "live-e", "Reply with exactly NOT_SENT. No tools.")
         self.assertEqual(code, 1, out)
 
-    @unittest.expectedFailure
     def test_force_clears_lines_below_the_cursor(self):
-        """Known bug: clear_draft stops once the ❯ line is empty, so lines under the cursor survive."""
         pane = self.ready("live-c")
         self.type_draft(pane, "DRAFT_TOP", "DRAFT_LOW")
         self.box.run("agent", "send-keys", pane, "up")
