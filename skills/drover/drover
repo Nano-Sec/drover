@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""herd: run Claude subagents in visible herdr panes. See SKILL.md."""
+"""drover: run Claude subagents in visible herdr panes. See SKILL.md."""
 import argparse, contextlib, fcntl, glob, json, os, re, shutil, subprocess, sys, time
 
 MIN_PANE_W = 60  # smallest readable Claude pane, in terminal columns and rows
@@ -9,13 +9,13 @@ MAX_ROWS = 4
 MIN_SPLIT_WIDTH = 2 * MIN_PANE_W
 ANY_STATE = ["working", "blocked", "done", "idle"]
 MIN_PYTHON = (3, 9)
-MIN_HERDR = (0, 8, 0)  # the oldest version herd has been tested against
+MIN_HERDR = (0, 8, 0)  # the oldest version drover has been tested against
 FALLBACK_MODE = "manual"  # when auto is unavailable. Never bypassPermissions.
-WARN = "warn"  # a doctor result: something is limited, but herd still works
+WARN = "warn"  # a doctor result: something is limited, but drover still works
 AUTO_REFUSED = re.compile(r"auto mode|'auto' is invalid", re.I)  # on the screen of a pane that exited
-STATE_DIR = os.path.abspath(os.path.expanduser(os.environ.get("HERD_STATE_DIR") or "~/.claude/herd"))
+STATE_DIR = os.path.abspath(os.path.expanduser(os.environ.get("DROVER_STATE_DIR") or "~/.claude/drover"))
 CLAUDE_HOME = os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"  # where Claude keeps its own files
-PROJECTS_DIR = os.path.abspath(os.path.expanduser(os.environ.get("HERD_PROJECTS_DIR") or os.path.join(CLAUDE_HOME, "projects")))
+PROJECTS_DIR = os.path.abspath(os.path.expanduser(os.environ.get("DROVER_PROJECTS_DIR") or os.path.join(CLAUDE_HOME, "projects")))
 REG_LOCK = ".registry.lock"  # held for each read-change-write of a registry
 SPAWN_LOCK = ".spawn.lock"  # held for a whole spawn, and always taken before REG_LOCK
 WORKTREES = os.path.join(STATE_DIR, "worktrees")
@@ -55,12 +55,12 @@ JOB_MARKS = ("run_in_background", "TaskStop", "tool_result")  # the transcript l
 
 
 def die(msg, code=1):
-    print(f"herd: {msg}", file=sys.stderr)
+    print(f"drover: {msg}", file=sys.stderr)
     sys.exit(code)
 
 
 def warn(msg):
-    print(f"herd: warning: {msg}", file=sys.stderr)
+    print(f"drover: warning: {msg}", file=sys.stderr)
 
 
 def herdr(*args, check=True):
@@ -193,7 +193,7 @@ def capacity():
 def split(target, rect, cwd):
     direction = "right" if rect["width"] >= MIN_SPLIT_WIDTH else "down"
     r = herdr("pane", "split", "--pane", target, "--direction", direction, "--cwd", cwd,
-              "--env", "HERD_CHILD=1", "--no-focus")
+              "--env", "DROVER_CHILD=1", "--no-focus")
     return r["pane"]["pane_id"]
 
 
@@ -229,7 +229,7 @@ def add_to_tab(panes, cwd, rows):
 
 def new_tab(label, cwd):
     t = herdr("tab", "create", "--workspace", os.environ["HERDR_WORKSPACE_ID"], "--cwd", cwd,
-              "--label", label, "--env", "HERD_CHILD=1", "--no-focus")
+              "--label", label, "--env", "DROVER_CHILD=1", "--no-focus")
     return t["root_pane"]["pane_id"]
 
 
@@ -351,7 +351,7 @@ def settled_mode(pane):
 
 def warn_not_auto(name, mode):
     warn(f"auto mode is not available for {name}, so Claude started it in {mode} mode instead. "
-         f"It will not run the way auto would{auto_cost(mode)}. Run herd doctor for details.")
+         f"It will not run the way auto would{auto_cost(mode)}. Run drover doctor for details.")
 
 
 def confirm_auto(name, pane):
@@ -375,7 +375,7 @@ def recheck_auto(name, session):
             break
     if not mode:
         warn(f"could not read the permission mode of {name}, so auto mode is not confirmed. "
-             "Run herd doctor if this keeps happening.")
+             "Run drover doctor if this keeps happening.")
     elif mode != "auto":
         mode = {"default": "manual"}.get(mode, mode)
         warn_not_auto(name, mode)
@@ -432,7 +432,7 @@ def submit(pane, text):
 
 
 class TranscriptError(Exception):
-    """A transcript exists but cannot be read, or is not in the format herd knows."""
+    """A transcript exists but cannot be read, or is not in the format drover knows."""
 
 
 def transcript(session):
@@ -472,7 +472,7 @@ def blocks(d):
 
 def message_in(path):
     """The last assistant text in a transcript, or None if it has no reply yet. Raises
-    TranscriptError if the file cannot be read or does not look the way herd expects."""
+    TranscriptError if the file cannot be read or does not look the way drover expects."""
     lines = transcript_lines(path)
     last, kinds, bad = None, set(), 0
     for line in lines:
@@ -489,7 +489,7 @@ def message_in(path):
             continue
         if "".join(parts).strip():
             last = "\n".join(parts)
-    changed = f"transcript {path} is not in the format herd expects, Claude may have changed it"
+    changed = f"transcript {path} is not in the format drover expects, Claude may have changed it"
     if any(l.strip() for l in lines) and not kinds:
         raise TranscriptError(f"{changed}: no line has a type")
     if kinds and "assistant" not in kinds:
@@ -502,7 +502,7 @@ def message_in(path):
 
 
 def last_message(session):
-    """Returns (last assistant text or None, what stopped herd reading it or None)."""
+    """Returns (last assistant text or None, what stopped drover reading it or None)."""
     path = transcript(session)
     if not path:
         return None, f"no transcript found for session {session or '(none yet)'} under {PROJECTS_DIR}"
@@ -534,7 +534,7 @@ def pending_jobs(session):
     which is all a foreground command moved to the background leaves. It ends with a task
     notification naming either id, with a TaskStop result naming its task id, because a stopped
     job writes no notification, or with is_error on its result, because then it never ran.
-    Anything else ends nothing, so a shape herd does not know keeps the job counted as running."""
+    Anything else ends nothing, so a shape drover does not know keeps the job counted as running."""
     path = transcript(session)
     if not path:
         return 0
@@ -619,7 +619,7 @@ def make_worktree(name, branch, cwd, alive, prior=None):
     ok, base = git(top, "symbolic-ref", "-q", "HEAD")
     if not ok:
         base = commit  # detached HEAD
-    wanted = branch or (prior or {}).get("branch") or f"herd/{name}"
+    wanted = branch or (prior or {}).get("branch") or f"drover/{name}"
     if not git(top, "check-ref-format", "--branch", wanted)[0]:
         die(f"{wanted} is not a valid branch name")
     exists = git(top, "show-ref", "--verify", "-q", f"refs/heads/{wanted}")[0]
@@ -679,7 +679,7 @@ def unsaved(w):
 
 
 def release(w):
-    """Remove a worktree and the branch herd made for it, unless that would lose work.
+    """Remove a worktree and the branch drover made for it, unless that would lose work.
     Returns the reasons it was kept, empty if it is gone. There is no force option on purpose."""
     why = unsaved(w)
     if why:
@@ -785,8 +785,8 @@ def label_pane(name, pane, label):
 
 
 def cmd_spawn(a):
-    if os.environ.get("HERD_CHILD"):
-        die("this pane is a herd subagent, it cannot spawn more")
+    if os.environ.get("DROVER_CHILD"):
+        die("this pane is a drover subagent, it cannot spawn more")
     a.brief = text_arg(a.brief)  # before the lock, since stdin can take a while
     with locked(SPAWN_LOCK):  # one at a time, so each spawn sees the panes the last one opened
         spawn(a)
@@ -802,7 +802,7 @@ def spawn(a):
     prior = old.get("worktree") if old else None
     if prior and a.worktree not in ("", prior["branch"]):
         die(f"{a.name} still has a worktree on record: {worktree_line(prior)}. "
-            f"Pass --worktree to reattach to it, pick another name, or run herd close {a.name} once it is merged")
+            f"Pass --worktree to reattach to it, pick another name, or run drover close {a.name} once it is merged")
     if any(x.get("name") == a.name for x in alive.values()):
         die(f"another live agent is already named {a.name}")
     brief = a.brief.strip()
@@ -834,7 +834,7 @@ def spawn(a):
     if mode != a.mode:
         warn(f"{a.name} could not start in auto mode, which may not be available on this account or "
              f"Claude version, so it is running in {mode} mode instead{auto_cost(mode)}. "
-             "Run herd doctor for details.")
+             "Run drover doctor for details.")
     label = label_pane(a.name, pane, (a.label or "").strip() or a.name)
     session = session_id(started["agent"]) or startup_session(pane)
     checked = confirm_auto(a.name, pane) if session and mode == "auto" else mode
@@ -846,7 +846,7 @@ def spawn(a):
         brief += WORKTREE_NOTE.format(**wt) + (REATTACH_NOTE if reattached else "")
     text = BRIEF.format(name=a.name, brief=brief)
     if not session:
-        entry["pending"] = text  # herd wait delivers it once the prompt is answered
+        entry["pending"] = text  # drover wait delivers it once the prompt is answered
     with editing() as latest:
         latest[a.name] = entry
     if session:
@@ -961,7 +961,7 @@ def cmd_wrapup(a):
             asked.append(name)
             print(f"{name}: asked, handoff due at {path}")
     if asked:
-        print(f"Run a background `herd wait <name>` for each of: {', '.join(asked)}")
+        print(f"Run a background `drover wait <name>` for each of: {', '.join(asked)}")
     else:
         print("no panes were asked")
 
@@ -993,7 +993,7 @@ def report(name, m, alive):
         if trouble:
             print(f"--- {trouble}. Background jobs cannot be seen, and this is the pane's screen, "
                   "which may be cut off. Transcript saving may be off, or its location or format "
-                  "may have changed. Run herd doctor ---\n" + screen_tail(m["pane"], 30))
+                  "may have changed. Run drover doctor ---\n" + screen_tail(m["pane"], 30))
         else:
             print(f"--- final message ---\n{msg or '(none yet)'}")
 
@@ -1077,7 +1077,7 @@ def cmd_rename(a):
         return
     tab = agent["tab_id"]
     if tab == os.environ["HERDR_TAB_ID"]:
-        die(f"{a.name} is in the primary tab, which herd does not rename")
+        die(f"{a.name} is in the primary tab, which drover does not rename")
     herdr("tab", "rename", tab, a.label)
     moved = [n for n, x in reg.items() if (locate(n, x, alive) or {}).get("tab_id") == tab]
     with editing() as latest:
@@ -1123,7 +1123,7 @@ def cmd_close(a):
                 if name in latest:
                     latest[name]["kept"] = True
             print(f"{name}: pane closed, work kept ({', '.join(why)})\n  {worktree_line(w)}\n"
-                  f"  Once it is merged or dealt with, run herd close {name} again to clean up.")
+                  f"  Once it is merged or dealt with, run drover close {name} again to clean up.")
         else:
             forget(name)
             print(f"{name}: closed, worktree removed")
@@ -1153,7 +1153,7 @@ def other_registries(alive):
         when = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(path)))
         owner = ", pane still hosts a live agent" if pane in alive else ""
         print(f"  {pane:<10} {len(reg)} subagents, {running} live, updated {when}{owner}: {', '.join(reg)}")
-    print("Adopt one with: herd resume --from <pane-id>")
+    print("Adopt one with: drover resume --from <pane-id>")
 
 
 def adopt(source, force):
@@ -1165,7 +1165,7 @@ def adopt(source, force):
     with locked(REG_LOCK):
         theirs = load(path)
         if not theirs:
-            print(f"herd: no registry for {source}", file=sys.stderr)
+            print(f"drover: no registry for {source}", file=sys.stderr)
             other_registries(alive)
             sys.exit(1)
         pane = os.path.basename(path)[:-len(".json")].replace("_", ":")
@@ -1185,8 +1185,8 @@ def adopt(source, force):
 
 
 def cmd_resume(a):
-    if os.environ.get("HERD_CHILD"):
-        die("this pane is a herd subagent, it has no subagents to resume")
+    if os.environ.get("DROVER_CHILD"):
+        die("this pane is a drover subagent, it has no subagents to resume")
     if a.source:
         adopt(a.source, a.force)
     reg, alive = synced()
@@ -1288,7 +1288,7 @@ def check_inside():
 
 def check_transcript_root():
     fix = ("start Claude once so it creates the folder. If Claude keeps its files somewhere other "
-           "than CLAUDE_CONFIG_DIR or ~/.claude, set HERD_PROJECTS_DIR to its projects folder")
+           "than CLAUDE_CONFIG_DIR or ~/.claude, set DROVER_PROJECTS_DIR to its projects folder")
     if not os.path.isdir(PROJECTS_DIR):
         return False, f"{PROJECTS_DIR} does not exist", fix
     return True, PROJECTS_DIR, None
@@ -1311,7 +1311,7 @@ def check_transcript_format():
         except TranscriptError as e:
             trouble = str(e)
     if trouble:
-        return False, trouble, ("update herd. Until then results fall back to the pane's screen, "
+        return False, trouble, ("update drover. Until then results fall back to the pane's screen, "
                                 "and background jobs cannot be seen")
     return None, "no finished transcripts yet, so there is nothing to check", None
 
@@ -1321,8 +1321,8 @@ def probe():
     leaves no transcript. It starts Claude the way spawn does, so auto mode being unavailable is
     a warning as long as the fallback works. Returns (auto check, input box check) as
     (ok, detail, fix) tuples."""
-    update = "update herd. Until then send refuses without --force"
-    name = f"herd-doctor-{os.getpid()}"
+    update = "update drover. Until then send refuses without --force"
+    name = f"drover-doctor-{os.getpid()}"
     with locked(SPAWN_LOCK):
         pane = split(PRIMARY, rects(PRIMARY)[PRIMARY], os.getcwd())
         try:
@@ -1346,11 +1346,11 @@ def probe():
         auto = True, "a test pane started in auto mode", None
     elif mode:
         auto = (WARN, f"a test pane started in {mode} mode, so auto mode is not available here",
-                f"check your Claude version, plan, model, and any disableAutoMode setting. herd still works: "
+                f"check your Claude version, plan, model, and any disableAutoMode setting. drover still works: "
                 f"spawn says so and runs subagents in {mode} mode{auto_cost(mode)}")
     else:
         auto = False, "could not find the permission mode in a test pane's footer", \
-            "update herd. Until then spawn warns that it cannot confirm auto mode"
+            "update drover. Until then spawn warns that it cannot confirm auto mode"
     if draft is False:
         box = True, "found the empty input box in a test pane", None
     elif draft:
@@ -1369,8 +1369,8 @@ def cmd_doctor(a):
     skip = None
     if not all(needed[k][0] for k in ("inside herdr", "claude", "herdr")):
         skip = "needs herdr and claude working, see above"
-    elif os.environ.get("HERD_CHILD"):
-        skip = "a herd subagent cannot open panes, run this from the primary"
+    elif os.environ.get("DROVER_CHILD"):
+        skip = "a drover subagent cannot open panes, run this from the primary"
     results += zip(("auto mode", "input box"), [(None, skip, None)] * 2 if skip else probe())
     failed = warned = 0
     for label, (ok, detail, fix) in results:
@@ -1381,13 +1381,13 @@ def cmd_doctor(a):
             print(f"     fix: {fix}")
     if failed:
         die(f"{failed} of {len(results)} checks failed")
-    print(f"herd is ready, with {warned} warning(s)" if warned else "herd is ready")
+    print(f"drover is ready, with {warned} warning(s)" if warned else "drover is ready")
 
 
 def main():
     if sys.argv[1:2] != ["doctor"] and (os.environ.get("HERDR_ENV") != "1" or not PRIMARY):
         die("not running inside herdr")
-    p = argparse.ArgumentParser(prog="herd")
+    p = argparse.ArgumentParser(prog="drover")
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("spawn")
     s.add_argument("name")
@@ -1398,7 +1398,7 @@ def main():
     s.add_argument("--tab", metavar="LABEL", help="run in a tab with this label, shared by agents using the same label")
     s.add_argument("--label", metavar="TEXT", help="label for the pane, default the agent's name")
     s.add_argument("--worktree", nargs="?", const="", metavar="BRANCH",
-                   help="run in a git worktree of the --cwd repo on BRANCH (default herd/<name>), reattaching if it exists")
+                   help="run in a git worktree of the --cwd repo on BRANCH (default drover/<name>), reattaching if it exists")
     s.set_defaults(fn=cmd_spawn)
     s = sub.add_parser("send")
     s.add_argument("name")
@@ -1432,7 +1432,7 @@ def main():
     s.add_argument("--from", dest="source", metavar="PANE", help="adopt the registry of another pane")
     s.add_argument("--force", action="store_true", help="adopt even if that pane hosts a live agent")
     s.set_defaults(fn=cmd_resume)
-    s = sub.add_parser("doctor", help="check that herd can run here, and say how to fix what fails")
+    s = sub.add_parser("doctor", help="check that drover can run here, and say how to fix what fails")
     s.set_defaults(fn=cmd_doctor)
     a = p.parse_args()
     a.fn(a)

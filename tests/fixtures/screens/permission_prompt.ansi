@@ -14,17 +14,17 @@
 [0m[48;2;55;55;55m                                                                                    [0m
 [0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mTask:[0m[48;2;55;55;55m                                                                             [0m
 [0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mUse the Bash tool with run_in_background set to true to run exactly: touch /priva[0m[48;2;55;55;55m [0m
-[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mte/var/folders/b1/fhc9n00n7dl3hqd9gtv2b3nm0000gn/T/herd-live-p0v_08n2/blocked.txt[0m[48;2;55;55;55m [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mte/var/folders/b1/fhc9n00n7dl3hqd9gtv2b3nm0000gn/T/drover-live-p0v_08n2/blocked.txt[0m[48;2;55;55;55m [0m
 [0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55m. End your turn right after it, saying only LAUNCHED.[0m[48;2;55;55;55m                             [0m
 
-[0m[38;2;153;153;153m  [0mCreating blocked.txt marker file in herd temp directory
+[0m[38;2;153;153;153m  [0mCreating blocked.txt marker file in drover temp directory
 [0m[38;2;153;153;153m  ⎿  $ touch /tmp/project[0m
      [0m[38;2;153;153;153m08n2/blocked.txt[0m
 
 [0m[38;2;177;185;249m────────────────────────────────────────────────────────────────────────────────────[0m
  [0m[1m[38;2;177;185;249mBash command[0m
  [0m[1mTip: auto mode handles these prompts for you — choose "switch to auto mode" below[0m
- [0m[38;2;153;153;153mCreate blocked.txt marker file in herd temp directory[0m
+ [0m[38;2;153;153;153mCreate blocked.txt marker file in drover temp directory[0m
 [0m[38;2;80;80;80m╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌[0m
  [0m[2m│ [0mtouch /tmp/project
  [0m[2m│ [0m2/blocked.txt

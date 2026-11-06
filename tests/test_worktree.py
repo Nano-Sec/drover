@@ -1,10 +1,10 @@
 """Worktree creation, reattaching, and the rules for keeping or removing work on close."""
 import os, shutil, unittest
 
-from tests.harness import HerdCase
+from tests.harness import DroverCase
 
 
-class WorktreeCase(HerdCase):
+class WorktreeCase(DroverCase):
     def setUp(self):
         super().setUp()
         self.base = self.repo()
@@ -26,12 +26,12 @@ class Create(WorktreeCase):
         out = self.wt("a")
         path = self.path("a")
         self.assertTrue(os.path.isfile(os.path.join(path, "a.txt")))
-        self.assertTrue(self.has_branch(self.base, "herd/a"))
-        self.assertIn("worktree created: branch herd/a", out)
+        self.assertTrue(self.has_branch(self.base, "drover/a"))
+        self.assertIn("worktree created: branch drover/a", out)
         self.assertEqual(self.pane("a")["cwd"], path)
         e = self.entry("a")
         self.assertEqual(e["cwd"], path)
-        self.assertEqual(e["worktree"], {"path": path, "branch": "herd/a", "base_repo": self.base,
+        self.assertEqual(e["worktree"], {"path": path, "branch": "drover/a", "base_repo": self.base,
                                          "base_ref": "refs/heads/main", "created_branch": True})
 
     def test_custom_branch(self):
@@ -42,12 +42,12 @@ class Create(WorktreeCase):
     def test_brief_explains_the_worktree(self):
         self.wt("a")
         brief = self.brief("a")
-        self.assertIn(f"own git worktree at {self.path('a')}, on branch herd/a", brief)
+        self.assertIn(f"own git worktree at {self.path('a')}, on branch drover/a", brief)
         self.assertNotIn("already holds earlier work", brief)
 
     def test_status_shows_the_branch(self):
         self.wt("a")
-        self.assertIn("[herd/a]", self.ok("status"))
+        self.assertIn("[drover/a]", self.ok("status"))
 
     def test_two_subagents_on_one_repo(self):
         self.wt("a")
@@ -97,7 +97,7 @@ class FailedSpawn(WorktreeCase):
         self.change(lambda s: s["start"].update(a="fail"))
         self.refused("spawn", "a", "x", "--cwd", self.base, "--worktree")
         self.assertFalse(os.path.exists(self.path("a")))
-        self.assertFalse(self.has_branch(self.base, "herd/a"))
+        self.assertFalse(self.has_branch(self.base, "drover/a"))
         self.assertEqual(self.reg(), {})
 
     def test_reattached_worktree_survives(self):
@@ -114,8 +114,8 @@ class CloseKeeps(WorktreeCase):
         self.settled("a")
         self.assertIn("a: closed, worktree removed", self.ok("close", "a"))
         self.assertFalse(os.path.exists(self.path("a")))
-        self.assertFalse(self.has_branch(self.base, "herd/a"))
-        self.assertNotIn("herd/a", self.git(self.base, "worktree", "list"))
+        self.assertFalse(self.has_branch(self.base, "drover/a"))
+        self.assertNotIn("drover/a", self.git(self.base, "worktree", "list"))
         self.assertEqual(self.reg(), {})
 
     def test_empty_repo_folder_is_tidied(self):
@@ -141,7 +141,7 @@ class CloseKeeps(WorktreeCase):
         self.settled("a")
         self.write(os.path.join(self.path("a"), "new.txt"), "x")
         self.assert_kept("a", "1 uncommitted changes")
-        self.assertTrue(self.has_branch(self.base, "herd/a"))
+        self.assertTrue(self.has_branch(self.base, "drover/a"))
 
     def test_changed_tracked_file(self):
         self.settled("a")
@@ -191,14 +191,14 @@ class CloseKeeps(WorktreeCase):
         shutil.rmtree(self.path("a"))
         out = self.ok("close", "a")
         self.assertIn("1 commits not on main", out)
-        self.assertTrue(self.has_branch(self.base, "herd/a"))
+        self.assertTrue(self.has_branch(self.base, "drover/a"))
 
     def test_branch_that_existed_before_is_not_deleted(self):
-        self.git(self.base, "branch", "herd/a")
+        self.git(self.base, "branch", "drover/a")
         self.settled("a")
         self.ok("close", "a")
         self.assertFalse(os.path.exists(self.path("a")))
-        self.assertTrue(self.has_branch(self.base, "herd/a"))
+        self.assertTrue(self.has_branch(self.base, "drover/a"))
 
     def test_pane_that_will_not_close_leaves_the_worktree_alone(self):
         self.settled("a")
@@ -227,10 +227,10 @@ class KeptWork(WorktreeCase):
         self.assertIn("closed, worktree kept", self.ok("result", "a"))
 
     def test_close_again_after_merge_cleans_up(self):
-        self.git(self.base, "merge", "-q", "--ff-only", "herd/a")
+        self.git(self.base, "merge", "-q", "--ff-only", "drover/a")
         self.assertIn("a: closed, worktree removed", self.ok("close", "a"))
         self.assertFalse(os.path.exists(self.path("a")))
-        self.assertFalse(self.has_branch(self.base, "herd/a"))
+        self.assertFalse(self.has_branch(self.base, "drover/a"))
         self.assertEqual(self.reg(), {})
 
     def test_close_again_before_merge_keeps_it(self):
@@ -244,7 +244,7 @@ class KeptWork(WorktreeCase):
 
     def test_entry_clears_after_a_manual_discard(self):
         self.git(self.base, "worktree", "remove", "--force", self.path("a"))
-        self.git(self.base, "branch", "-D", "herd/a")
+        self.git(self.base, "branch", "-D", "drover/a")
         self.ok("close", "a")
         self.assertEqual(self.reg(), {})
 
@@ -257,9 +257,9 @@ class KeptWork(WorktreeCase):
 
 class Reattach(WorktreeCase):
     def test_existing_branch_gets_a_new_worktree(self):
-        self.git(self.base, "branch", "herd/a")
+        self.git(self.base, "branch", "drover/a")
         seed = os.path.join(self.root, "seed")
-        self.git(self.base, "worktree", "add", "-q", seed, "herd/a")
+        self.git(self.base, "worktree", "add", "-q", seed, "drover/a")
         self.commit_file(seed, "earlier.txt")
         self.git(self.base, "worktree", "remove", seed)
         out = self.wt("a")
@@ -304,13 +304,13 @@ class Reattach(WorktreeCase):
         reg = self.reg()
         del reg["a"]
         self.save_reg(reg)
-        out = self.spawn("b", "--cwd", self.base, "--worktree", "herd/a")
+        out = self.spawn("b", "--cwd", self.base, "--worktree", "drover/a")
         self.assertIn("reattached to existing worktree", out)
         self.assertEqual(self.entry("b")["cwd"], self.path("a"))
 
     def test_refused_while_a_live_agent_is_there(self):
         self.wt("a")
-        self.assertIn("live agent", self.refused("spawn", "b", "x", "--cwd", self.base, "--worktree", "herd/a"))
+        self.assertIn("live agent", self.refused("spawn", "b", "x", "--cwd", self.base, "--worktree", "drover/a"))
         self.assertNotIn("b", self.reg())
 
     def test_refused_while_a_live_agent_is_below_it(self):
@@ -318,7 +318,7 @@ class Reattach(WorktreeCase):
         pid = self.entry("a")["pane"]
         sub = self.mkdir(os.path.relpath(self.path("a"), self.root), "sub")
         self.change(lambda s: s["panes"][pid]["agent"].update(cwd=self.work, foreground_cwd=sub))
-        self.assertIn("live agent", self.refused("spawn", "b", "x", "--cwd", self.base, "--worktree", "herd/a"))
+        self.assertIn("live agent", self.refused("spawn", "b", "x", "--cwd", self.base, "--worktree", "drover/a"))
 
     def test_worktree_deleted_by_hand_is_replaced(self):
         self.settled("a")

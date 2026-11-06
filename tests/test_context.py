@@ -1,10 +1,10 @@
 """What spawn pastes into a brief: handoffs and CLAUDE.md files from outside the pane's folder."""
 import os, unittest
 
-from tests.harness import HerdCase
+from tests.harness import DroverCase
 
 
-class Handoff(HerdCase):
+class Handoff(DroverCase):
     def handoff(self, name):
         return os.path.join(self.state_dir, "handoffs", name + ".md")
 
@@ -46,7 +46,7 @@ class Handoff(HerdCase):
         self.assertNotIn("cut off here", self.brief("a"))
 
 
-class ProjectContext(HerdCase):
+class ProjectContext(DroverCase):
     def setUp(self):
         super().setUp()
         self.project = self.mkdir("home", "project")

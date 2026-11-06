@@ -1,12 +1,12 @@
 """A throwaway herdr session in a fake terminal, for the opt-in live tests.
 
 Everything here protects the user's real session: the session has its own name, the
-environment drops every HERDR_, HERD_ and CLAUDE variable (Claude turns transcripts off
+environment drops every HERDR_, DROVER_ and CLAUDE variable (Claude turns transcripts off
 when it inherits them), sound is off, and the registry goes to a temp folder.
 """
 import fcntl, json, os, pty, shutil, signal, struct, subprocess, tempfile, termios, threading, time
 
-DROP = ("HERDR_", "HERD_", "CLAUDE")
+DROP = ("HERDR_", "DROVER_", "CLAUDE")
 
 
 def clean_env():
@@ -16,11 +16,11 @@ def clean_env():
 class Box:
     def __init__(self, helper, name=None, cols=200, rows=60, cwd=None, extra_env=None):
         self.helper = helper
-        self.name = name or f"herdlive{os.getpid()}"
+        self.name = name or f"droverlive{os.getpid()}"
         if self.name == "default":
             raise ValueError("refusing to use the default herdr session")
         self.cwd = cwd or os.getcwd()
-        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="herd-live-"))
+        self.tmp = os.path.realpath(tempfile.mkdtemp(prefix="drover-live-"))
         self.state = os.path.join(self.tmp, "state")
         config = os.path.join(self.tmp, "herdr.toml")
         with open(config, "w") as f:
@@ -72,8 +72,8 @@ class Box:
                           self.j("workspace", "create", "--cwd", self.cwd)["workspace"]["workspace_id"])
         root = self.j("pane", "list", "--workspace", self.workspace)["panes"][0]
         self.primary, self.tab = root["pane_id"], root["tab_id"]
-        self.herd_env = {**self.env, "HERDR_ENV": "1", "HERDR_PANE_ID": self.primary, "HERDR_TAB_ID": self.tab,
-                         "HERDR_WORKSPACE_ID": self.workspace, "HERD_STATE_DIR": self.state}
+        self.drover_env = {**self.env, "HERDR_ENV": "1", "HERDR_PANE_ID": self.primary, "HERDR_TAB_ID": self.tab,
+                         "HERDR_WORKSPACE_ID": self.workspace, "DROVER_STATE_DIR": self.state}
 
     def _sessions(self):
         r = subprocess.run(["herdr", "session", "list", "--json"], env=self.base, capture_output=True, text=True)
@@ -90,7 +90,7 @@ class Box:
 
     def h(self, *args, cwd=None, stdin=None, timeout=300, primary=None):
         """Run the helper as the primary, or as another pane, returning (exit code, stdout plus stderr)."""
-        env = {**self.herd_env, "HERDR_PANE_ID": primary or self.primary}
+        env = {**self.drover_env, "HERDR_PANE_ID": primary or self.primary}
         r = subprocess.run([self.helper, *args], env=env, capture_output=True, text=True,
                            cwd=cwd or self.cwd, input=stdin, timeout=timeout)
         return r.returncode, r.stdout + r.stderr

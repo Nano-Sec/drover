@@ -1,10 +1,10 @@
 """wrapup: who gets asked, who is skipped, and what happens to older handoffs."""
 import os, unittest
 
-from tests.harness import HerdCase
+from tests.harness import DroverCase
 
 
-class Wrapup(HerdCase):
+class Wrapup(DroverCase):
     def setUp(self):
         super().setUp()
         self.handoffs = os.path.join(self.state_dir, "handoffs")

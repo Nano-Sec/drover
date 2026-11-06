@@ -1,10 +1,10 @@
 """doctor: what each result means, and that only real failures fail it."""
 import os, unittest
 
-from tests.harness import HerdCase, PRIMARY
+from tests.harness import DroverCase, PRIMARY
 
 
-class Doctor(HerdCase):
+class Doctor(DroverCase):
     def setUp(self):
         super().setUp()
         claude = self.write(os.path.join(self.root, "bin", "claude"), "#!/bin/sh\necho 2.1.319\n")
@@ -17,7 +17,7 @@ class Doctor(HerdCase):
         out = self.ok("doctor")
         self.assertIn("PASS auto mode: a test pane started in auto mode", out)
         self.assertIn("PASS input box", out)
-        self.assertTrue(out.rstrip().endswith("herd is ready"), out)
+        self.assertTrue(out.rstrip().endswith("drover is ready"), out)
         self.assertNotIn("fix:", out)
 
     def test_test_pane_is_closed(self):
@@ -32,7 +32,7 @@ class Doctor(HerdCase):
         self.assertIn("fix: check your Claude version", out)
         self.assertIn("it stops at approval prompts", out)
         self.assertIn("PASS input box", out)
-        self.assertIn("herd is ready, with 1 warning(s)", out)
+        self.assertIn("drover is ready, with 1 warning(s)", out)
 
     def test_auto_refused_in_unknown_words_is_a_warning(self):
         self.start("no_auto_quiet")
@@ -46,7 +46,7 @@ class Doctor(HerdCase):
 
     def test_warning_does_not_name_the_test_pane(self):
         self.start("no_auto")
-        self.assertNotIn("herd-doctor", self.ok("doctor"))
+        self.assertNotIn("drover-doctor", self.ok("doctor"))
 
     def test_claude_that_never_starts_fails(self):
         self.start("fail")
@@ -87,7 +87,7 @@ class Doctor(HerdCase):
         """An old ~/.claude/projects must not pass for a config folder that has none."""
         self.mkdir("home", ".claude", "projects")
         config = self.mkdir("home", "config")
-        env = {"HERD_PROJECTS_DIR": "", "CLAUDE_CONFIG_DIR": config}
+        env = {"DROVER_PROJECTS_DIR": "", "CLAUDE_CONFIG_DIR": config}
         wanted = os.path.join(config, "projects")
         self.assertIn(f"FAIL transcript location: {wanted} does not exist", self.refused("doctor", env=env))
         self.mkdir("home", "config", "projects")
@@ -95,16 +95,16 @@ class Doctor(HerdCase):
 
     def test_transcript_location_defaults_to_the_home_folder(self):
         wanted = self.mkdir("home", ".claude", "projects")
-        self.assertIn(f"PASS transcript location: {wanted}", self.ok("doctor", env={"HERD_PROJECTS_DIR": ""}))
+        self.assertIn(f"PASS transcript location: {wanted}", self.ok("doctor", env={"DROVER_PROJECTS_DIR": ""}))
 
-    def test_herd_projects_dir_beats_claude_config_dir(self):
+    def test_drover_projects_dir_beats_claude_config_dir(self):
         config = self.mkdir("home", "config", "projects")
         out = self.ok("doctor", env={"CLAUDE_CONFIG_DIR": os.path.dirname(config)})
         self.assertIn(f"PASS transcript location: {self.projects}", out)
 
     def test_subagent_pane_skips_the_probe(self):
-        out = self.ok("doctor", env={"HERD_CHILD": "1"})
-        self.assertIn("SKIP auto mode: a herd subagent cannot open panes", out)
+        out = self.ok("doctor", env={"DROVER_CHILD": "1"})
+        self.assertIn("SKIP auto mode: a drover subagent cannot open panes", out)
         self.assertEqual(self.calls("pane", "split"), [])
 
 

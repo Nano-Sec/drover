@@ -1,7 +1,7 @@
 """Shared setup for the fast tests: a sandbox folder, the fake herdr, and small helpers.
 
 Each test gets its own HOME, state folder and projects folder, so nothing can reach the real
-~/.claude. HERD_BIN points the tests at another copy of the helper.
+~/.claude. DROVER_BIN points the tests at another copy of the helper.
 """
 import json, os, shutil, subprocess, sys, tempfile, unittest
 
@@ -9,11 +9,11 @@ from tests.fake_herdr import close_pane
 
 TESTS = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(TESTS)
-HELPER = os.path.abspath(os.environ.get("HERD_BIN") or os.path.join(ROOT, "skills", "herd", "herd"))
+HELPER = os.path.abspath(os.environ.get("DROVER_BIN") or os.path.join(ROOT, "skills", "drover", "drover"))
 FIXTURES = os.path.join(TESTS, "fixtures")
 PRIMARY = "w1:p1"
 HOME_TAB = "w1:t1"
-OVERRIDES = ("HERD_STATE_DIR", "HERD_PROJECTS_DIR")
+OVERRIDES = ("DROVER_STATE_DIR", "DROVER_PROJECTS_DIR")
 
 
 def fixture(*parts):
@@ -41,7 +41,7 @@ class Result:
         self.code, self.out = code, out
 
 
-class HerdCase(unittest.TestCase):
+class DroverCase(unittest.TestCase):
     window = (200, 60)
     maxDiff = None
 
@@ -51,8 +51,8 @@ class HerdCase(unittest.TestCase):
         missing = [v for v in OVERRIDES if v not in source]
         if missing:
             self.fail(f"{HELPER} does not read {' or '.join(missing)}, which these tests need. "
-                      "Set HERD_BIN to a helper that does.")
-        self.root = os.path.realpath(tempfile.mkdtemp(prefix="herd-test-"))
+                      "Set DROVER_BIN to a helper that does.")
+        self.root = os.path.realpath(tempfile.mkdtemp(prefix="drover-test-"))
         self.addCleanup(shutil.rmtree, self.root, True)
         self.home = self.mkdir("home")
         self.state_dir = self.mkdir("state")
@@ -74,8 +74,8 @@ class HerdCase(unittest.TestCase):
         self.env = {
             "PATH": bin_dir + os.pathsep + os.environ.get("PATH", ""), "HOME": self.home, "PYTHONUTF8": "1",
             "HERDR_ENV": "1", "HERDR_PANE_ID": PRIMARY, "HERDR_TAB_ID": HOME_TAB, "HERDR_WORKSPACE_ID": "w1",
-            "HERD_STATE_DIR": self.state_dir, "HERD_PROJECTS_DIR": self.projects,
-            "FAKE_HERDR_STATE": self.state_file, "FAKE_HERD_HELPER": HELPER,
+            "DROVER_STATE_DIR": self.state_dir, "DROVER_PROJECTS_DIR": self.projects,
+            "FAKE_HERDR_STATE": self.state_file, "FAKE_DROVER_HELPER": HELPER,
             "GIT_CONFIG_NOSYSTEM": "1", "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
         }
@@ -143,22 +143,22 @@ class HerdCase(unittest.TestCase):
 
     # The helper
 
-    def herd(self, *args, stdin=None, cwd=None, env=None, patience=None):
+    def drover(self, *args, stdin=None, cwd=None, env=None, patience=None):
         environ = {**self.env, **(env or {})}
         if patience is not None:
             environ["FAKE_JOB_PATIENCE"] = str(patience)
-        p = subprocess.run([sys.executable, os.path.join(TESTS, "run_herd.py"), *args], env=environ, cwd=cwd or self.work,
+        p = subprocess.run([sys.executable, os.path.join(TESTS, "run_drover.py"), *args], env=environ, cwd=cwd or self.work,
                            input=stdin, capture_output=True, text=True, timeout=60)
         self.assertNotIn("Traceback", p.stderr, p.stderr)
         return Result(p.returncode, p.stdout + p.stderr)
 
     def ok(self, *args, **kw):
-        r = self.herd(*args, **kw)
+        r = self.drover(*args, **kw)
         self.assertEqual(r.code, 0, r.out)
         return r.out
 
     def refused(self, *args, **kw):
-        r = self.herd(*args, **kw)
+        r = self.drover(*args, **kw)
         self.assertNotEqual(r.code, 0, r.out)
         return r.out
 

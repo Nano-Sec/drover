@@ -1,12 +1,12 @@
 """resume after a restart: reconciling state and adopting another pane's registry."""
 import os, re, unittest
 
-from tests.harness import HerdCase, PRIMARY, assistant_line
+from tests.harness import DroverCase, PRIMARY, assistant_line
 
 OTHER = "w1:p50"
 
 
-class Resume(HerdCase):
+class Resume(DroverCase):
     def states(self, out):
         return {m[0]: m[1] for m in re.findall(r"^(\S+)\s+(running|settled|blocked|gone|kept)\s", out, re.M)}
 
@@ -33,7 +33,7 @@ class Resume(HerdCase):
 
     def test_commands_use_the_helper_path(self):
         self.spawn("run")
-        self.assertRegex(self.ok("resume"), r"  /\S+herd wait run")
+        self.assertRegex(self.ok("resume"), r"  /\S+drover wait run")
 
     def test_nothing_running(self):
         self.spawn("a")
@@ -81,17 +81,17 @@ class Resume(HerdCase):
         self.assertEqual(self.states(self.ok("resume")), {"ghost": "gone"})
 
     def test_refused_inside_a_subagent(self):
-        self.assertIn("no subagents to resume", self.refused("resume", env={"HERD_CHILD": "1"}))
+        self.assertIn("no subagents to resume", self.refused("resume", env={"DROVER_CHILD": "1"}))
 
 
-class Adopt(HerdCase):
+class Adopt(DroverCase):
     def setUp(self):
         super().setUp()
         self.spawn("a")
         self.spawn("b")
 
     def as_other(self, *args):
-        return self.herd(*args, env={"HERDR_PANE_ID": OTHER})
+        return self.drover(*args, env={"HERDR_PANE_ID": OTHER})
 
     def test_empty_pane_lists_other_registries(self):
         r = self.as_other("resume")

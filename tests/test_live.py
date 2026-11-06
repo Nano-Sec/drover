@@ -1,12 +1,12 @@
 """Opt-in tests against real herdr and real Claude. They spend tokens, on haiku.
 
-    HERD_LIVE=1 python3 -m unittest tests.test_live
+    DROVER_LIVE=1 python3 -m unittest tests.test_live
 
 They run in a throwaway herdr session with the registry in a temp folder, so the user's own
 session and registry are not touched. Claude must already trust the folder it starts in, and
 these tests never answer its trust prompt. The plain tests start in this checkout, or
-HERD_TEST_TRUSTED_REPO if set, and skip if Claude stops at the prompt. The worktree tests need
-HERD_TEST_TRUSTED_REPO, a git repo the user has already trusted, and skip without it. They add
+DROVER_TEST_TRUSTED_REPO if set, and skip if Claude stops at the prompt. The worktree tests need
+DROVER_TEST_TRUSTED_REPO, a git repo the user has already trusted, and skip without it. They add
 a branch and a worktree for the length of the test and remove both.
 """
 import glob, json, os, shutil, subprocess, threading, time, unittest
@@ -14,14 +14,14 @@ import glob, json, os, shutil, subprocess, threading, time, unittest
 from tests import formats
 from tests.harness import HELPER, OVERRIDES, ROOT
 
-LIVE = os.environ.get("HERD_LIVE") == "1"
-TRUSTED = os.environ.get("HERD_TEST_TRUSTED_REPO")
+LIVE = os.environ.get("DROVER_LIVE") == "1"
+TRUSTED = os.environ.get("DROVER_TEST_TRUSTED_REPO")
 HELD = "held at a startup prompt"
 # Claude Code refuses a standalone sleep in the foreground, so a busy pane needs something else.
 BUSY = """python3 -c 'import time; time.sleep(25)'"""
 
 
-@unittest.skipUnless(LIVE, "set HERD_LIVE=1 to run live tests, which use real Claude tokens")
+@unittest.skipUnless(LIVE, "set DROVER_LIVE=1 to run live tests, which use real Claude tokens")
 class LiveCase(unittest.TestCase):
     cwd = None
     extra_env = None
@@ -284,11 +284,11 @@ class NoTranscript(LiveCase):
         self.assertIn("SCREEN_OK", result)
 
 
-@unittest.skipUnless(TRUSTED, "set HERD_TEST_TRUSTED_REPO to a git repo Claude already trusts")
+@unittest.skipUnless(TRUSTED, "set DROVER_TEST_TRUSTED_REPO to a git repo Claude already trusts")
 class Worktree(LiveCase):
     def setUp(self):
         self.name = f"live-wt{os.getpid()}"
-        self.branch = f"herd/{self.name}"
+        self.branch = f"drover/{self.name}"
         self.addCleanup(self.tidy)
 
     def git(self, *args):
@@ -363,15 +363,15 @@ class Worktree(LiveCase):
         self.assertTrue(os.path.isfile(handoff))
 
     def test_wrapup_of_panes_started_inside_a_worktree(self):
-        """Panes given a worktree with --cwd: herd has no worktree on record, and the agents commit there."""
+        """Panes given a worktree with --cwd: drover has no worktree on record, and the agents commit there."""
         head = self.git("rev-parse", "HEAD").stdout
         panes = {}
         for tag in ("a", "b"):
             name, path = f"{self.name}-{tag}", os.path.join(self.box.tmp, f"direct-{tag}")
-            self.addCleanup(self.git, "branch", "-D", f"herd/{name}")
+            self.addCleanup(self.git, "branch", "-D", f"drover/{name}")
             self.addCleanup(self.git, "worktree", "remove", "--force", path)
             self.close_later(name)
-            added = self.git("worktree", "add", "-b", f"herd/{name}", path)
+            added = self.git("worktree", "add", "-b", f"drover/{name}", path)
             self.assertEqual(added.returncode, 0, added.stderr)
             self.spawn(name, "Use the Write tool to create live-note.txt in your folder, holding the word NOTE. "
                              "Then reply with exactly NOTE_DONE.", "--cwd", path)
@@ -387,9 +387,9 @@ class Worktree(LiveCase):
             handoff = os.path.join(self.box.state, "handoffs", f"{name}.md")
             result = self.wait(name)
             self.assertIn(handoff, result)
-            self.assertIn(f"herd/{name}", result)
+            self.assertIn(f"drover/{name}", result)
             self.assertTrue(os.path.isfile(handoff), result)
-            tree = subprocess.run(["git", "-C", path, "ls-tree", "-r", "--name-only", f"herd/{name}"],
+            tree = subprocess.run(["git", "-C", path, "ls-tree", "-r", "--name-only", f"drover/{name}"],
                                   capture_output=True, text=True).stdout
             self.assertIn("live-note.txt", tree, result)
         self.assertEqual(self.git("rev-parse", "HEAD").stdout, head)

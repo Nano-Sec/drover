@@ -3,7 +3,7 @@ real herdr produced for the same spawns, at the window sizes the helper was tune
 import json, os, unittest
 
 from tests.fake_herdr import area, lay_out
-from tests.harness import FIXTURES, HOME_TAB, HerdCase, PRIMARY
+from tests.harness import FIXTURES, HOME_TAB, DroverCase, PRIMARY
 
 
 def rects(case, pane=PRIMARY):
@@ -14,7 +14,7 @@ def rects(case, pane=PRIMARY):
     return {p["pane_id"]: [p["rect"][k] for k in ("x", "y", "width", "height")] for p in panes}
 
 
-class LayoutCase(HerdCase):
+class LayoutCase(DroverCase):
     def set_window(self, cols, rows):
         self.change(lambda s: s.update(window=[cols, rows]))
 
@@ -108,8 +108,8 @@ class Placement(LayoutCase):
     def test_new_panes_are_marked_as_subagents(self):
         self.spawn("a")
         self.spawn("b", "--tab", "Docs")
-        self.assertEqual(self.pane("a")["env"], ["HERD_CHILD=1"])
-        self.assertEqual(self.pane("b")["env"], ["HERD_CHILD=1"])
+        self.assertEqual(self.pane("a")["env"], ["DROVER_CHILD=1"])
+        self.assertEqual(self.pane("b")["env"], ["DROVER_CHILD=1"])
 
 
 if __name__ == "__main__":

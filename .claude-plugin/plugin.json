@@ -1,12 +1,12 @@
 {
-  "name": "herd",
+  "name": "drover",
   "version": "0.1.0",
   "description": "Run Claude subagents as visible, steerable sessions in herdr panes.",
   "author": {
     "name": "Abhinav Upadhyay"
   },
-  "homepage": "https://github.com/Nano-Sec/herd",
-  "repository": "https://github.com/Nano-Sec/herd",
+  "homepage": "https://github.com/Nano-Sec/drover",
+  "repository": "https://github.com/Nano-Sec/drover",
   "license": "MIT",
   "keywords": ["subagents", "herdr", "terminal", "worktrees"]
 }

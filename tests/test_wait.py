@@ -1,7 +1,7 @@
 """wait and result: final messages, blocked prompts, and pauses on background jobs."""
 import json, unittest
 
-from tests.harness import HerdCase, assistant_line, job_line, notification_line
+from tests.harness import DroverCase, assistant_line, job_line, notification_line
 
 
 def tool_use_line(tool, name="Bash", **inputs):
@@ -19,7 +19,7 @@ def task_notification_line(task):
     return json.dumps({"type": "queue-operation", "content": f"<task-notification>\n<task-id>{task}</task-id>\n</task-notification>"})
 
 
-class Result(HerdCase):
+class Result(DroverCase):
     def setUp(self):
         super().setUp()
         self.spawn("a")
@@ -48,7 +48,7 @@ class Result(HerdCase):
         self.assertIn("(none yet)", self.ok("wait", "a"))
 
     def test_no_assistant_entries_falls_back_to_the_screen(self):
-        """This may be no reply yet or a changed format, and herd cannot tell which, so it says so."""
+        """This may be no reply yet or a changed format, and drover cannot tell which, so it says so."""
         self.say("a", '{"type": "custom-title"}')
         self.change_pane("a", screen="what the pane shows\n")
         out = self.ok("wait", "a")
@@ -96,7 +96,7 @@ class Result(HerdCase):
         self.assertIn("no subagent named nope", self.refused("result", "nope"))
 
 
-class Moved(HerdCase):
+class Moved(DroverCase):
     """Any pane move ends herdr agent wait with an error while the agent keeps working. The fake's
     wait fails at once on a working pane, which is what cmd_wait sees after a move."""
 
@@ -158,7 +158,7 @@ class Moved(HerdCase):
         self.assertNotIn("paused", out)
 
 
-class Pause(HerdCase):
+class Pause(DroverCase):
     """An agent can end its turn with background jobs running. That is a pause, not the end."""
 
     def setUp(self):
@@ -268,7 +268,7 @@ class Pause(HerdCase):
             self.assertLessEqual(int(call[call.index("--timeout") + 1]), 1)
 
 
-class JobEnds(HerdCase):
+class JobEnds(DroverCase):
     """The ways a job ends without the notification naming its tool use id, and the shapes that must
     not count as an end, because a wait that stops early loses the agent's real final message."""
 

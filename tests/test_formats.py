@@ -7,7 +7,7 @@ sample: a failure here then shows which assumption in the helper no longer holds
 import json, subprocess, unittest
 
 from tests import formats
-from tests.harness import HerdCase, fixture
+from tests.harness import DroverCase, fixture
 
 TRANSCRIPTS = ["background_running.jsonl", "background_finished.jsonl", "background_stopped.jsonl",
                "background_moved.jsonl", "background_moved_finished.jsonl"]
@@ -37,7 +37,7 @@ def result_of(name, use):
                 for c in d["message"]["content"] if c.get("tool_use_id") == use["id"])
 
 
-class Transcripts(HerdCase):
+class Transcripts(DroverCase):
     def setUp(self):
         super().setUp()
         self.spawn("a")
@@ -107,7 +107,7 @@ class Transcripts(HerdCase):
 
     def test_a_renamed_field_falls_back_to_counting_as_before(self):
         """If Claude renames a field, a job that ended still counts as running, which only costs
-        time, and a moved job goes unseen, as it did before herd read that field."""
+        time, and a moved job goes unseen, as it did before drover read that field."""
         for sample, field in [("background_stopped.jsonl", "task_id"), ("background_stopped.jsonl", "backgroundTaskId"),
                               ("background_rejected.jsonl", "is_error")]:
             self.say_changed(sample, field)
@@ -120,7 +120,7 @@ class Transcripts(HerdCase):
             f.write(fixture("transcripts", sample).replace(f'"{field}"', '"renamed"'))
 
 
-class Screens(HerdCase):
+class Screens(DroverCase):
     def setUp(self):
         super().setUp()
         self.spawn("a")
@@ -180,7 +180,7 @@ class Screens(HerdCase):
         self.assertIn("Yes, I trust this folder", self.ok("result", "a"))
 
 
-class Herdr(HerdCase):
+class Herdr(DroverCase):
     def fake_says(self, *args):
         p = subprocess.run(["herdr", *args], env=self.env, capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stderr)

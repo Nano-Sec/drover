@@ -1,10 +1,10 @@
 """Spawn, send, close, rename and status, and how the registry tracks them."""
 import json, os, subprocess, unittest
 
-from tests.harness import HELPER, HerdCase, PRIMARY, assistant_line
+from tests.harness import HELPER, DroverCase, PRIMARY, assistant_line
 
 
-class Sandbox(HerdCase):
+class Sandbox(DroverCase):
     def test_refuses_to_run_outside_herdr(self):
         env = {k: v for k, v in self.env.items() if not k.startswith("HERDR_")}
         p = subprocess.run([HELPER, "status"], env=env, capture_output=True, text=True)
@@ -25,11 +25,11 @@ class Sandbox(HerdCase):
         path = self.write(os.path.join(config, "projects", "-sandbox", "session-1.jsonl"),
                           assistant_line("from the config folder") + "\n")
         self.assertTrue(os.path.isfile(path))
-        env = {"HERD_PROJECTS_DIR": "", "CLAUDE_CONFIG_DIR": config}
+        env = {"DROVER_PROJECTS_DIR": "", "CLAUDE_CONFIG_DIR": config}
         self.assertIn("from the config folder", self.ok("wait", "a", env=env))
 
 
-class Spawn(HerdCase):
+class Spawn(DroverCase):
     def test_records_the_subagent(self):
         out = self.spawn("alpha", "--model", "haiku", "--mode", "manual")
         e = self.entry("alpha")
@@ -75,7 +75,7 @@ class Spawn(HerdCase):
         self.assertEqual(self.calls("pane", "split"), [])
 
     def test_refused_inside_a_subagent(self):
-        self.assertIn("cannot spawn more", self.refused("spawn", "a", "x", env={"HERD_CHILD": "1"}))
+        self.assertIn("cannot spawn more", self.refused("spawn", "a", "x", env={"DROVER_CHILD": "1"}))
 
     def test_name_already_running(self):
         self.spawn("alpha")
@@ -112,7 +112,7 @@ class Spawn(HerdCase):
         self.assertEqual(len(self.pane("alpha")["prompts"]), 1)
 
 
-class AutoMode(HerdCase):
+class AutoMode(DroverCase):
     def modes(self):
         return [c[c.index("--permission-mode") + 1] for c in self.calls("agent", "start")]
 
@@ -141,7 +141,7 @@ class AutoMode(HerdCase):
         self.assertEqual(self.entry("alpha")["mode"], "manual")
 
 
-class HeldAtStartup(HerdCase):
+class HeldAtStartup(DroverCase):
     """Claude reports no session while the folder trust prompt is up."""
 
     def setUp(self):
@@ -167,7 +167,7 @@ class HeldAtStartup(HerdCase):
         self.assertIn("Only the user should answer it", self.out)
 
     def test_no_key_ever_reaches_the_prompt(self):
-        self.herd("send", "held", "hello")
+        self.drover("send", "held", "hello")
         self.ok("wait", "held", "--timeout", "3000")
         self.ok("status")
         self.ok("resume")
@@ -202,7 +202,7 @@ class HeldAtStartup(HerdCase):
         self.assertIn("wait held", out)
 
 
-class Send(HerdCase):
+class Send(DroverCase):
     def setUp(self):
         super().setUp()
         self.spawn("a")
@@ -260,7 +260,7 @@ class Send(HerdCase):
         self.assertEqual(self.pane("a")["draft"], "half typed")
 
 
-class Close(HerdCase):
+class Close(DroverCase):
     def test_settled_pane_closes(self):
         self.spawn("a")
         self.ok("wait", "a")
@@ -304,7 +304,7 @@ class Close(HerdCase):
         self.assertEqual(self.calls("pane", "close"), [])
 
 
-class Tracking(HerdCase):
+class Tracking(DroverCase):
     def test_moved_pane_is_followed_by_session(self):
         self.spawn("a")
         new = self.move_pane("a")
@@ -339,7 +339,7 @@ class Tracking(HerdCase):
             self.assertIn("a", json.load(f))
 
 
-class Status(HerdCase):
+class Status(DroverCase):
     def test_lists_state_of_each_subagent(self):
         self.spawn("a")
         self.spawn("b")
@@ -353,7 +353,7 @@ class Status(HerdCase):
         self.assertIn("no subagents", self.ok("status"))
 
 
-class Rename(HerdCase):
+class Rename(DroverCase):
     def test_renames_the_tab_and_every_subagent_in_it(self):
         self.spawn("a", "--tab", "Old")
         self.spawn("b", "--tab", "Old")
