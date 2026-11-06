@@ -188,13 +188,23 @@ def agent_cmd(state, verb, args):
     if verb == "start":
         pos, flags = parse(args, values=["--kind", "--pane", "--timeout"])
         name, pid = pos[0], flags["--pane"]
-        behaviour = state["start"].get(name, "ok")
+        behaviour = state["start"].get(name, state["start"].get("*", "ok"))
         state["start_argv"][name] = flags["--"]
         if behaviour == "fail":
             fail(command, "agent_start_failed", "agent did not become ready")
         pane = state["panes"].get(pid)
         if pane is None:
             fail(command, "pane_not_found", f"pane {pid} not found")
+        if behaviour in ("no_auto", "no_auto_quiet") and "auto" in flags["--"]:
+            if behaviour == "no_auto":
+                pane["output"] = "error: option '--permission-mode <mode>' argument 'auto' is invalid.\n"
+            fail(command, "agent_start_failed", "agent did not become ready")
+        if behaviour == "manual_footer":  # Claude accepts auto, then starts in another mode
+            pane["screen"] = IDLE_SCREEN.replace("auto mode on", "manual mode on")
+        elif behaviour == "no_footer":
+            pane["screen"] = IDLE_SCREEN.replace("auto mode on", "")
+        elif behaviour == "no_box":
+            pane["screen"] = IDLE_SCREEN.replace("❯", ">")
         pane["agent"] = {"name": name, "agent_status": "idle"}
         state["sessions"] += 1
         session = f"session-{state['sessions']}"
@@ -257,6 +267,17 @@ def agent_cmd(state, verb, args):
 
 def pane_cmd(state, verb, args):
     command = f"pane:{verb}"
+    if verb == "read":
+        pos, _ = parse(args, values=["--source", "--lines"])
+        if pos[0] not in state["panes"]:
+            fail(command, "pane_not_found", f"pane {pos[0]} not found")
+        raise Stop(0, out=state["panes"][pos[0]].get("output", ""))
+    if verb == "rename":
+        pid, label = args
+        if pid not in state["panes"]:
+            fail(command, "pane_not_found", f"pane {pid} not found")
+        state["panes"][pid]["label"] = label
+        return ok("pane_info", command, pane=pane_info(state, pid))
     if verb == "layout":
         _, flags = parse(args, values=["--pane"])
         pid = flags["--pane"]
@@ -314,10 +335,18 @@ def tab_cmd(state, verb, args):
     raise Stop(2, err=f"error: unknown tab command {verb}\n")
 
 
+def integration_cmd(state, verb, args):
+    if verb != "status":
+        raise Stop(2, err=f"error: unknown integration command {verb}\n")
+    raise Stop(0, out=f"claude: {state.get('integration', 'current')}\n")
+
+
 def run(state, argv):
+    if argv == ["--version"]:
+        raise Stop(0, out=f"herdr {state.get('version', '0.8.0')}\n")
     if len(argv) < 2:
         raise Stop(2, err="error: missing command\n")
-    group = {"agent": agent_cmd, "pane": pane_cmd, "tab": tab_cmd}.get(argv[0])
+    group = {"agent": agent_cmd, "pane": pane_cmd, "tab": tab_cmd, "integration": integration_cmd}.get(argv[0])
     if not group:
         raise Stop(2, err=f"error: unknown command {argv[0]}\n")
     return group(state, argv[1], argv[2:])

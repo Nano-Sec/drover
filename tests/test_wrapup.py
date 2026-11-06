@@ -132,13 +132,12 @@ class Wrapup(HerdCase):
         self.close_pane_outside("c")
         self.assertIn("for each of: a\n", self.ok("wrapup"))
 
-    @unittest.expectedFailure
     def test_moved_pane_is_not_called_gone(self):
-        """Known bug: wrapup reads the registry without syncing it, unlike every other command.
-        Confirmed against real herdr: gone, skipped, then status, then asked."""
         self.settled("a")
-        self.move_pane("a")
+        new = self.move_pane("a")
         self.assertIn("a: asked", self.ok("wrapup", "a"))
+        self.assertEqual(self.entry("a")["pane"], new)
+        self.assertEqual(len(self.told("a")), 1)
 
 
 if __name__ == "__main__":
