@@ -19,6 +19,16 @@ class Sandbox(HerdCase):
         self.assertFalse(os.path.exists(os.path.join(self.home, ".claude")))
 
 
+    def test_transcripts_are_read_from_claude_config_dir(self):
+        self.spawn("a")
+        config = self.mkdir("home", "config")
+        path = self.write(os.path.join(config, "projects", "-sandbox", "session-1.jsonl"),
+                          assistant_line("from the config folder") + "\n")
+        self.assertTrue(os.path.isfile(path))
+        env = {"HERD_PROJECTS_DIR": "", "CLAUDE_CONFIG_DIR": config}
+        self.assertIn("from the config folder", self.ok("wait", "a", env=env))
+
+
 class Spawn(HerdCase):
     def test_records_the_subagent(self):
         out = self.spawn("alpha", "--model", "haiku", "--mode", "manual")

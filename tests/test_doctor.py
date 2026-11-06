@@ -83,6 +83,25 @@ class Doctor(HerdCase):
         self.change(lambda s: s.update(integration="outdated"))
         self.assertIn("FAIL claude integration: outdated", self.refused("doctor"))
 
+    def test_transcript_location_follows_claude_config_dir(self):
+        """An old ~/.claude/projects must not pass for a config folder that has none."""
+        self.mkdir("home", ".claude", "projects")
+        config = self.mkdir("home", "config")
+        env = {"HERD_PROJECTS_DIR": "", "CLAUDE_CONFIG_DIR": config}
+        wanted = os.path.join(config, "projects")
+        self.assertIn(f"FAIL transcript location: {wanted} does not exist", self.refused("doctor", env=env))
+        self.mkdir("home", "config", "projects")
+        self.assertIn(f"PASS transcript location: {wanted}", self.ok("doctor", env=env))
+
+    def test_transcript_location_defaults_to_the_home_folder(self):
+        wanted = self.mkdir("home", ".claude", "projects")
+        self.assertIn(f"PASS transcript location: {wanted}", self.ok("doctor", env={"HERD_PROJECTS_DIR": ""}))
+
+    def test_herd_projects_dir_beats_claude_config_dir(self):
+        config = self.mkdir("home", "config", "projects")
+        out = self.ok("doctor", env={"CLAUDE_CONFIG_DIR": os.path.dirname(config)})
+        self.assertIn(f"PASS transcript location: {self.projects}", out)
+
     def test_subagent_pane_skips_the_probe(self):
         out = self.ok("doctor", env={"HERD_CHILD": "1"})
         self.assertIn("SKIP auto mode: a herd subagent cannot open panes", out)

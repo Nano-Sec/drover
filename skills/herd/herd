@@ -14,7 +14,8 @@ FALLBACK_MODE = "manual"  # when auto is unavailable. Never bypassPermissions.
 WARN = "warn"  # a doctor result: something is limited, but herd still works
 AUTO_REFUSED = re.compile(r"auto mode|'auto' is invalid", re.I)  # on the screen of a pane that exited
 STATE_DIR = os.path.abspath(os.path.expanduser(os.environ.get("HERD_STATE_DIR") or "~/.claude/herd"))
-PROJECTS_DIR = os.path.abspath(os.path.expanduser(os.environ.get("HERD_PROJECTS_DIR") or "~/.claude/projects"))
+CLAUDE_HOME = os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"  # where Claude keeps its own files
+PROJECTS_DIR = os.path.abspath(os.path.expanduser(os.environ.get("HERD_PROJECTS_DIR") or os.path.join(CLAUDE_HOME, "projects")))
 REG_LOCK = ".registry.lock"  # held for each read-change-write of a registry
 SPAWN_LOCK = ".spawn.lock"  # held for a whole spawn, and always taken before REG_LOCK
 WORKTREES = os.path.join(STATE_DIR, "worktrees")
@@ -367,8 +368,7 @@ def paste(path):
 
 def global_context():
     """The user's own CLAUDE.md, which every session loads whatever its folder."""
-    config = os.environ.get("CLAUDE_CONFIG_DIR") or "~/.claude"
-    return os.path.realpath(os.path.join(os.path.expanduser(config), "CLAUDE.md"))
+    return os.path.realpath(os.path.join(os.path.expanduser(CLAUDE_HOME), "CLAUDE.md"))
 
 
 def outside_context(cwd):
@@ -1221,8 +1221,8 @@ def check_inside():
 
 
 def check_transcript_root():
-    fix = ("start Claude once so it creates the folder. If Claude keeps its files elsewhere, "
-           "for example through CLAUDE_CONFIG_DIR, set HERD_PROJECTS_DIR to its projects folder")
+    fix = ("start Claude once so it creates the folder. If Claude keeps its files somewhere other "
+           "than CLAUDE_CONFIG_DIR or ~/.claude, set HERD_PROJECTS_DIR to its projects folder")
     if not os.path.isdir(PROJECTS_DIR):
         return False, f"{PROJECTS_DIR} does not exist", fix
     return True, PROJECTS_DIR, None
