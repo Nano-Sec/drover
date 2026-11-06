@@ -800,9 +800,14 @@ def spawn(a):
 
 
 def cmd_send(a):
-    m = member(synced()[0], a.name)
+    reg, alive = synced()
+    m = member(reg, a.name)
     if m.get("pending"):
         die(f"{a.name} is still at a startup prompt and has not had its brief. The user must answer it first")
+    agent = locate(a.name, m, alive)
+    if agent and agent["agent_status"] == "blocked":
+        # The Enter in a prompt would pick the highlighted option, which is usually Yes.
+        die(f"{a.name} is waiting on a prompt, and sending now would answer it. The user must respond in that pane first")
     draft = has_draft(m["pane"])
     if draft is None:
         if not a.force:
