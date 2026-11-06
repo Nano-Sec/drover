@@ -1,0 +1,905 @@
+#!/usr/bin/env python3
+"""herd: run Claude subagents in visible herdr panes. See SKILL.md."""
+import argparse, glob, json, os, re, subprocess, sys, time
+
+MIN_PANE_W = 60  # smallest readable Claude pane, in terminal columns and rows
+MIN_PANE_H = 14
+MAX_COLS = 2     # subagent grid limits, which keep the splits even
+MAX_ROWS = 4
+MIN_SPLIT_WIDTH = 2 * MIN_PANE_W
+ANY_STATE = ["working", "blocked", "done", "idle"]
+STATE_DIR = os.path.expanduser("~/.claude/herd")
+WORKTREES = os.path.join(STATE_DIR, "worktrees")
+HANDOFFS = os.path.join(STATE_DIR, "handoffs")
+PRIMARY = os.environ.get("HERDR_PANE_ID", "")
+
+
+def reg_path(pane):
+    return os.path.join(STATE_DIR, pane.replace(":", "_") + ".json")
+
+
+REG_PATH = reg_path(PRIMARY)
+
+BRIEF = """You are a subagent named {name}, running in your own herdr pane. A primary Claude session delegated this task to you, and the user can watch and message you here directly. Treat messages in this pane as coming from the user or the primary.
+
+Rules: do the task yourself and do not start further subagents or panes. The primary reads only your final message, so end with a complete, self-contained report of what you did and found, including file paths.
+
+Task:
+{brief}"""
+
+WORKTREE_NOTE = """
+
+You are working in your own git worktree at {path}, on branch {branch}, so parallel subagents cannot collide. Stay in it and commit your work to that branch. Do not merge or push unless told to. Files that git ignores in the main repo, such as .env, are not here."""
+
+REATTACH_NOTE = " This worktree or branch already holds earlier work, so check git status and git log before you start."
+
+HANDOFF_NOTE = "This continues earlier work. Here is the handoff from the last session, also saved at {path}:\n\n{text}\n\n---\n\n"
+
+CONTEXT_NOTE = "Project context from {path}, which your folder does not load automatically:\n\n{text}\n\n---\n\n"
+
+MAX_PASTE = 20000  # characters of any one file pasted into a brief
+JOB_PATIENCE = 1800  # seconds to wait on a paused pane before reporting it anyway
+
+
+def die(msg, code=1):
+    print(f"herd: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def herdr(*args, check=True):
+    p = subprocess.run(["herdr", *args], capture_output=True, text=True)
+    if p.returncode != 0:
+        if check:
+            die(f"herdr {' '.join(args[:3])} failed: {(p.stderr or p.stdout).strip()[:400]}")
+        return None
+    try:
+        return json.loads(p.stdout).get("result", {})
+    except ValueError:
+        return p.stdout
+
+
+def load(path=REG_PATH):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def save(reg, path=REG_PATH):
+    """Write by rename, so a background wait never reads half a file."""
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(reg, f, indent=1)
+    os.replace(tmp, path)
+
+
+def live():
+    """Live agents keyed by pane id."""
+    return {a["pane_id"]: a for a in herdr("agent", "list")["agents"]}
+
+
+def session_id(agent):
+    return (agent.get("agent_session") or {}).get("value")
+
+
+def locate(name, m, alive):
+    """The live agent for a registry entry, or None. A pane moved to another workspace gets a
+    new id, so match on the session first, then on the name in the same pane or directory."""
+    if m.get("kept"):
+        return None
+    for a in alive.values():
+        if m.get("session") and session_id(a) == m["session"]:
+            return a
+    for a in alive.values():
+        if a.get("name") == name and (a["pane_id"] == m["pane"] or a.get("cwd") == m["cwd"]):
+            return a
+    return None
+
+
+def refresh(reg, alive):
+    """Bring pane and session ids up to date. Returns True if anything changed."""
+    changed = False
+    for name, m in reg.items():
+        a = locate(name, m, alive)
+        if not a:
+            continue
+        ids = (a["pane_id"], session_id(a) or m.get("session"))
+        if ids != (m["pane"], m.get("session")):
+            m["pane"], m["session"] = ids
+            changed = True
+    return changed
+
+
+def synced():
+    """The registry and the live agents, reconciled."""
+    reg, alive = load(), live()
+    if refresh(reg, alive):
+        save(reg)
+    return reg, alive
+
+
+def member(reg, name):
+    if name not in reg:
+        die(f"no subagent named {name}. Known: {', '.join(reg) or 'none'}")
+    return reg[name]
+
+
+def rects(tab_pane):
+    return {p["pane_id"]: p["rect"] for p in herdr("pane", "layout", "--pane", tab_pane)["layout"]["panes"]}
+
+
+def capacity():
+    """Subagents per tab that stay readable at the current window size."""
+    a = herdr("pane", "layout", "--pane", PRIMARY)["layout"]["area"]
+    rows = min(MAX_ROWS, max(1, a["height"] // MIN_PANE_H))
+    if a["width"] < MIN_SPLIT_WIDTH:
+        # Too narrow to sit beside the primary, so subagents stack under it and share its height.
+        return max(1, min(rows - 1, 2)), a, rows
+    cols = min(MAX_COLS, max(1, a["width"] // 2 // MIN_PANE_W))
+    return cols * rows, a, rows
+
+
+def split(target, rect, cwd):
+    direction = "right" if rect["width"] >= MIN_SPLIT_WIDTH else "down"
+    r = herdr("pane", "split", "--pane", target, "--direction", direction, "--cwd", cwd,
+              "--env", "HERD_CHILD=1", "--no-focus")
+    return r["pane"]["pane_id"]
+
+
+def even_column(pane):
+    """Even out a stack of three, since splitting halves the lower pane twice."""
+    r = rects(pane)
+    me = r.get(pane)
+    if not me:
+        return
+    col = sorted((p for p, x in r.items() if x["x"] == me["x"] and x["width"] == me["width"]),
+                 key=lambda p: r[p]["y"])
+    if len(col) != 3:
+        return
+    total = sum(r[p]["height"] for p in col)
+    top = r[col[0]]["height"]
+    if top > 1.3 * min(r[p]["height"] for p in col):
+        herdr("pane", "resize", "--pane", col[0], "--direction", "up",
+              "--amount", f"{(top - total / 3) / total:.3f}", check=False)
+
+
+def add_to_tab(panes, cwd, rows):
+    """Split the biggest pane, preferring the lowest one when sizes are close."""
+    r = rects(panes[0])
+    panes = [p for p in panes if p in r]
+    area = lambda p: r[p]["width"] * r[p]["height"]
+    biggest = max(area(p) for p in panes)
+    target = max((p for p in panes if area(p) >= 0.85 * biggest), key=lambda p: r[p]["y"])
+    pane = split(target, r[target], cwd)
+    if rows < MAX_ROWS:  # a stack of four comes out even by halving, so leave it alone
+        even_column(pane)
+    return pane
+
+
+def new_tab(label, cwd):
+    t = herdr("tab", "create", "--workspace", os.environ["HERDR_WORKSPACE_ID"], "--cwd", cwd,
+              "--label", label, "--env", "HERD_CHILD=1", "--no-focus")
+    return t["root_pane"]["pane_id"]
+
+
+def place(reg, cwd, name, group):
+    """Return (pane, group). No group: the primary tab, then a tab of the agent's own.
+    With a group: a tab labelled for it, holding up to capacity() panes."""
+    limit, _, rows = capacity()
+    alive = live()
+    tabs = {}
+    for n, m in reg.items():
+        agent = locate(n, m, alive)
+        if agent:
+            tabs.setdefault(agent["tab_id"], []).append(m)
+    home = os.environ["HERDR_TAB_ID"]
+    if group is None:
+        mine = [m["pane"] for m in tabs.get(home, [])]
+        if not mine:
+            r = rects(PRIMARY)
+            return split(PRIMARY, r[PRIMARY], cwd), None
+        if len(mine) < limit:
+            return add_to_tab(mine, cwd, rows), None
+        return new_tab(name, cwd), name
+    same = [ms for t, ms in tabs.items() if t != home and ms[0].get("group") == group]
+    for ms in same:
+        if len(ms) < limit:
+            return add_to_tab([m["pane"] for m in ms], cwd, rows), group
+    return new_tab(group if not same else f"{group} {len(same) + 1}", cwd), group
+
+
+def text_arg(value):
+    return sys.stdin.read() if value == "-" else value
+
+
+def has_draft(pane):
+    """True if someone has unsent text in the pane's input box."""
+    r = herdr("agent", "read", pane, "--source", "visible", "--format", "ansi", check=False)
+    screen = r.get("read", {}).get("text", "") if isinstance(r, dict) else (r or "")
+    if isinstance(r, dict) and not screen:
+        screen = r.get("text", "")
+    for line in reversed(screen.splitlines()[-10:]):
+        plain = re.sub(r"\x1b\[[0-9;:]*m", "", line)
+        if plain.lstrip().startswith("❯"):
+            rest = line.split("❯", 1)[1]
+            # Dim or inverse-only content is a ghost suggestion or the cursor, not typed text.
+            rest = re.sub(r"\x1b\[(?:[0-9;:]*;)?(?:2|7)m.*", "", rest)
+            return bool(re.sub(r"\x1b\[[0-9;:]*m", "", rest).strip())
+    return False
+
+
+def paste(path):
+    with open(path, errors="replace") as f:
+        text = f.read().strip()
+    if len(text) > MAX_PASTE:
+        text = text[:MAX_PASTE] + f"\n\n(cut off here, the rest is in {path})"
+    return text
+
+
+def outside_context(cwd):
+    """CLAUDE.md files around the primary that a session started in cwd would not load."""
+    home = os.path.expanduser("~")
+    found = []
+    d = os.getcwd()
+    while d not in (home, os.path.dirname(d)):
+        path = os.path.join(d, "CLAUDE.md")
+        if os.path.isfile(path) and not (cwd + os.sep).startswith(d + os.sep):
+            found.append(path)
+        d = os.path.dirname(d)
+    return list(reversed(found))
+
+
+def submit(pane, text):
+    """Send a prompt and return once it is accepted, without waiting for the turn."""
+    agent = live().get(pane)
+    if agent and agent["agent_status"] == "working":
+        # It queues behind the turn, and no state change comes to confirm it by.
+        herdr("agent", "prompt", pane, text)
+        return
+    args = ["agent", "prompt", pane, text, "--wait", "--timeout", "20000"]
+    for s in ANY_STATE:
+        args += ["--until", s]
+    herdr(*args)
+
+
+def transcript(session):
+    hits = glob.glob(os.path.expanduser(f"~/.claude/projects/*/{session}.jsonl"))
+    return hits[0] if hits else None
+
+
+def last_message(session):
+    path = transcript(session)
+    if not path:
+        return None
+    last = None
+    with open(path) as f:
+        for line in f:
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if d.get("type") != "assistant" or d.get("isSidechain"):
+                continue
+            parts = [c["text"] for c in d["message"].get("content", []) if c.get("type") == "text"]
+            if parts and "".join(parts).strip():
+                last = "\n".join(parts)
+    return last
+
+
+def pending_jobs(session):
+    """Background jobs the agent started that have not reported back yet. Agents end their
+    turn while these run, so an idle pane with jobs pending has paused, not finished."""
+    path = transcript(session) if session else None
+    if not path:
+        return 0
+    started, finished = [], set()
+    with open(path) as f:
+        for line in f:
+            if "<task-notification>" in line:
+                finished.update(re.findall(r"tool-use-id>([^<\\]+)", line))
+            if "run_in_background" not in line:
+                continue
+            try:
+                d = json.loads(line)
+            except ValueError:
+                continue
+            if d.get("type") == "assistant" and not d.get("isSidechain"):
+                started += [c["id"] for c in d["message"].get("content", [])
+                            if c.get("type") == "tool_use" and c.get("input", {}).get("run_in_background")]
+    return len([j for j in started if j not in finished])
+
+
+def git(cwd, *args):
+    """Run git in cwd and return (ok, output). Callers treat not ok as a reason to keep work."""
+    p = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True)
+    return p.returncode == 0, (p.stdout if p.returncode == 0 else p.stderr).strip()
+
+
+def short_ref(ref):
+    return ref[len("refs/heads/"):] if ref.startswith("refs/heads/") else ref[:10]
+
+
+def checked_out(top, branch):
+    """Where this branch is checked out: (path, is the main worktree), or (None, False)."""
+    ok, out = git(top, "worktree", "list", "--porcelain")
+    for i, block in enumerate(out.split("\n\n") if ok else []):
+        lines = block.splitlines()
+        if f"branch refs/heads/{branch}" in lines:
+            return lines[0][len("worktree "):], i == 0
+    return None, False
+
+
+def in_use(path, alive):
+    """True if a live agent is running in this directory or below it."""
+    real = os.path.realpath(path)
+    for a in alive.values():
+        for d in (a.get("cwd"), a.get("foreground_cwd")):
+            d = os.path.realpath(d) if d else ""
+            if d == real or d.startswith(real + os.sep):
+                return True
+    return False
+
+
+def make_worktree(name, branch, cwd, alive, prior=None):
+    """Create or reattach the subagent's worktree. Returns (record, fresh, what happened).
+    Dies on any problem, so this must run before a pane is opened. prior is the record left
+    by an earlier subagent of this name, if any."""
+    ok, top = git(cwd, "rev-parse", "--show-toplevel")
+    if not ok:
+        die(f"--worktree needs a git repo, and {cwd} is not in one")
+    ok, commit = git(top, "rev-parse", "--verify", "-q", "HEAD")
+    if not ok:
+        die(f"{top} has no commits yet, so there is nothing to branch from")
+    ok, base = git(top, "symbolic-ref", "-q", "HEAD")
+    if not ok:
+        base = commit  # detached HEAD
+    wanted = branch or (prior or {}).get("branch") or f"herd/{name}"
+    if not git(top, "check-ref-format", "--branch", wanted)[0]:
+        die(f"{wanted} is not a valid branch name")
+    exists = git(top, "show-ref", "--verify", "-q", f"refs/heads/{wanted}")[0]
+    found, main = checked_out(top, wanted)
+    if prior and os.path.isdir(prior["path"]):
+        found, main = prior["path"], False  # the subagent may have left it on another branch
+    if found and not os.path.isdir(found):
+        git(top, "worktree", "prune")
+        found = None
+    if found and main:
+        die(f"branch {wanted} is checked out in the main working copy at {found}. "
+            "Switch that copy to another branch first, or use a different branch")
+    if found and in_use(found, alive):
+        die(f"a live agent is already running in {found}, on branch {wanted}")
+    record = {"path": found, "branch": wanted, "base_repo": top, "base_ref": base,
+              "created_branch": not exists}
+    if prior:
+        record.update(base_ref=prior["base_ref"], created_branch=prior.get("created_branch", False))
+    if found:
+        return record, False, "reattached to existing worktree"
+    path = os.path.join(WORKTREES, os.path.basename(top), name)
+    if os.path.lexists(path):
+        die(f"{path} already exists. Pick another name, or sort out what is there first")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    ok, out = git(top, "worktree", "add", *([path, wanted] if exists else ["-b", wanted, path]))
+    if not ok:
+        die(f"git worktree add failed: {out[:400]}")
+    record["path"] = path
+    return record, True, "reattached existing branch in a new worktree" if exists else "created"
+
+
+def unsaved(w):
+    """Why this worktree cannot be removed yet, as a list. Ignored files count, since git
+    would delete them silently. A check that fails counts too, so errors never lose work."""
+    path, ref = w["path"], f"refs/heads/{w['branch']}"
+    here, tips, why = w["base_repo"], [], []
+    if os.path.isdir(path):
+        here, tips = path, ["HEAD"]  # HEAD covers a subagent that switched branch or detached
+        ok, out = git(path, "status", "--porcelain", "--ignored", "--untracked-files=all")
+        if not ok:
+            return [f"git cannot read it ({out[:200]})"]
+        lines = out.splitlines()
+        ignored = sum(l.startswith("!!") for l in lines)
+        if len(lines) > ignored:
+            why.append(f"{len(lines) - ignored} uncommitted changes")
+        if ignored:
+            why.append(f"{ignored} ignored files")
+    if git(here, "show-ref", "--verify", "-q", ref)[0]:
+        tips.append(ref)
+    if tips:
+        ok, out = git(here, "rev-list", "--count", *tips, "--not", w["base_ref"])
+        if not ok:
+            why.append(f"cannot compare it with {short_ref(w['base_ref'])}")
+        elif out != "0":
+            why.append(f"{out} commits not on {short_ref(w['base_ref'])}")
+    return why
+
+
+def release(w):
+    """Remove a worktree and the branch herd made for it, unless that would lose work.
+    Returns the reasons it was kept, empty if it is gone. There is no force option on purpose."""
+    why = unsaved(w)
+    if why:
+        return why
+    path, base, branch = w["path"], w["base_repo"], w["branch"]
+    if os.path.isdir(path):
+        ok, out = git(base, "worktree", "remove", path)
+        if not ok:
+            return [f"git refused to remove it ({out[:200]})"]
+    else:
+        git(base, "worktree", "prune")
+    if w.get("created_branch") and git(base, "show-ref", "--verify", "-q", f"refs/heads/{branch}")[0]:
+        ok, out = git(base, "branch", "-D", branch)  # unsaved() has shown it holds nothing new
+        if not ok:
+            print(f"  branch {branch} left in place: {out[:200]}")
+    try:
+        os.rmdir(os.path.dirname(path))  # only succeeds when no other worktree of this repo is left
+    except OSError:
+        pass
+    return []
+
+
+def worktree_line(w):
+    return f"branch {w['branch']} at {w['path']} (base {short_ref(w['base_ref'])} in {w['base_repo']})"
+
+
+def startup_session(pane):
+    """Claude reports no session while it sits at a startup prompt such as folder trust."""
+    for _ in range(4):
+        time.sleep(1)
+        r = herdr("agent", "get", pane, check=False)
+        s = session_id(r.get("agent", {})) if isinstance(r, dict) else None
+        if s:
+            return s
+    return None
+
+
+def deliver(name, timeout_ms):
+    """Hand over a brief held at a startup prompt, once the user has answered it."""
+    deadline = time.time() + timeout_ms / 1000 if timeout_ms else None
+    while not deadline or time.time() < deadline:
+        reg, alive = synced()
+        m = reg.get(name)
+        agent = locate(name, m, alive) if m else None
+        if not agent:
+            return
+        if agent["agent_status"] != "blocked" and m.get("session"):
+            submit(m["pane"], m["pending"])
+            reg = load()
+            reg[name].pop("pending", None)
+            save(reg)
+            return
+        time.sleep(2)
+
+
+def cmd_spawn(a):
+    if os.environ.get("HERD_CHILD"):
+        die("this pane is a herd subagent, it cannot spawn more")
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,31}", a.name):
+        die("name must match [a-z][a-z0-9_-]{0,31}")
+    reg, alive = synced()
+    old = reg.get(a.name)
+    if old and locate(a.name, old, alive):
+        die(f"{a.name} is already running")
+    prior = old.get("worktree") if old else None
+    if prior and a.worktree not in ("", prior["branch"]):
+        die(f"{a.name} still has a worktree on record: {worktree_line(prior)}. "
+            f"Pass --worktree to reattach to it, pick another name, or run herd close {a.name} once it is merged")
+    if any(x.get("name") == a.name for x in alive.values()):
+        die(f"another live agent is already named {a.name}")
+    brief = text_arg(a.brief).strip()
+    if not brief:
+        die("empty brief")
+    handoff = os.path.join(HANDOFFS, a.name + ".md")
+    if os.path.isfile(handoff):
+        brief = HANDOFF_NOTE.format(path=handoff, text=paste(handoff)) + brief
+    cwd = os.path.abspath(a.cwd or os.getcwd())
+    wt, fresh, how = None, False, ""
+    if a.worktree is not None:
+        wt, fresh, how = make_worktree(a.name, a.worktree, prior["base_repo"] if prior else cwd, alive, prior)
+        cwd = wt["path"]
+    for path in outside_context(os.path.realpath(cwd)):
+        brief = CONTEXT_NOTE.format(path=path, text=paste(path)) + brief
+    native = ["--permission-mode", a.mode, "-n", a.name]
+    if a.model:
+        native += ["--model", a.model]
+    try:
+        pane, group = place(reg, cwd, a.name, a.tab)
+        started = None
+        for _ in range(5):
+            time.sleep(1)
+            started = herdr("agent", "start", a.name, "--kind", "claude", "--pane", pane,
+                            "--timeout", "45000", "--", *native, check=False)
+            if started:
+                break
+        if not started:
+            herdr("pane", "close", pane, check=False)
+            die(f"could not start claude in {pane}, pane closed")
+    except BaseException:
+        if fresh:
+            release(wt)  # nothing ran in it, so do not leave an unrecorded worktree behind
+        raise
+    session = session_id(started["agent"]) or startup_session(pane)
+    reg[a.name] = {"pane": pane, "session": session, "cwd": cwd, "mode": a.mode, "model": a.model, "group": group}
+    if wt:
+        reg[a.name]["worktree"] = wt
+        brief += WORKTREE_NOTE.format(**wt) + (REATTACH_NOTE if how != "created" else "")
+    text = BRIEF.format(name=a.name, brief=brief)
+    if not session:
+        reg[a.name]["pending"] = text  # herd wait delivers it once the prompt is answered
+    save(reg)
+    if session:
+        submit(pane, text)
+    where = f"tab '{group}'" if group else "the primary tab"
+    print(f"{a.name} started in {pane}, {where} ({a.mode}, {a.model or 'default model'}), session {session or 'pending'}")
+    if wt:
+        print(f"worktree {how}: {worktree_line(wt)}")
+        if not fresh:
+            print(f"  it holds: {', '.join(unsaved(wt)) or 'nothing new'}")
+    if os.path.isfile(handoff):
+        print(f"handoff: brief points to {handoff}")
+    if not session:
+        print(f"{a.name} is held at a startup prompt, usually Claude's folder trust check for {cwd}. "
+              f"Only the user should answer it, in pane {pane}. The brief is not delivered yet: "
+              "start the usual background wait now, and it hands the brief over once they accept.")
+
+
+def cmd_send(a):
+    m = member(synced()[0], a.name)
+    if m.get("pending"):
+        die(f"{a.name} is still at a startup prompt and has not had its brief. The user must answer it first")
+    if has_draft(m["pane"]):
+        if not a.force:
+            die(f"{a.name} has unsent text in its input box, probably the user typing. "
+                "Check with the user. --force discards it.")
+        if not clear_draft(m["pane"]):
+            die(f"could not clear the unsent text in {a.name}")
+    submit(m["pane"], text_arg(a.text))
+    print(f"sent to {a.name}")
+
+
+HANDOFF_DIR = os.path.join(STATE_DIR, "handoffs")
+
+WRAPUP = """The session is ending for now, so wrap up and hand off. If you are mid-task, stop at the next safe point and do not start new work.
+
+1. Commit your work if it is in a git worktree or on a task branch. Stage only the files you changed for this task, and commit to the current branch of that checkout. Never push. Never commit on the repo's main branch (main, master, or whatever origin/HEAD points to). If your work is on it, or is not in a git repo, leave the changes as they are and say so in the handoff.
+
+2. Write a handoff to {path} with these sections: Status, Decisions and why, Next steps, Open questions. Write for a new session with no memory of this one. Put it at exactly that path, not in the repo, and do not commit it.
+
+3. End with a final message giving your branch, your worktree path, and the handoff path. Use "none" for anything that does not apply."""
+
+
+def clear_draft(pane):
+    """Empty the input box and return True if it worked. A prompt sent on top of a draft
+    merges with it, and Claude then reads the prompt as pasted text, not as a request."""
+    for _ in range(20):
+        herdr("agent", "send-keys", pane, "ctrl+u", "backspace", check=False)
+        time.sleep(0.3)
+        if not has_draft(pane):
+            return True
+    return False
+
+
+def cmd_wrapup(a):
+    reg = load()
+    names = list(dict.fromkeys(a.names)) or list(reg)
+    if not names:
+        die("no subagents")
+    for name in names:
+        member(reg, name)
+    os.makedirs(HANDOFF_DIR, exist_ok=True)
+    alive = live()
+    asked = []
+    for name in names:
+        pane = reg[name]["pane"]
+        agent = alive.get(pane)
+        if not agent:
+            print(f"{name}: gone, skipped")
+        elif agent["agent_status"] == "blocked":
+            print(f"{name}: blocked on a prompt, skipped. Run wrapup for it again once the prompt is answered.")
+        elif has_draft(pane) and not a.force:
+            print(f"{name}: unsent text in its input box, skipped. Check with the user. --force discards it.")
+        elif has_draft(pane) and not clear_draft(pane):
+            print(f"{name}: could not clear its unsent text, skipped")
+        else:
+            path = os.path.join(HANDOFF_DIR, f"{name}.md")
+            # Move any older handoff aside, so the file existing means this wrapup wrote it.
+            old = os.path.exists(path)
+            if old:
+                os.replace(path, path + ".prev")
+            try:
+                submit(pane, WRAPUP.format(path=path))
+            except SystemExit:
+                if old:
+                    os.replace(path + ".prev", path)
+                print(f"{name}: send failed, skipped")
+                continue
+            asked.append(name)
+            print(f"{name}: asked, handoff due at {path}")
+    if asked:
+        print(f"Run a background `herd wait <name>` for each of: {', '.join(asked)}")
+    else:
+        print("no panes were asked")
+
+
+def report(name, m, alive):
+    agent = locate(name, m, alive)
+    if m.get("worktree"):
+        print(f"worktree: {worktree_line(m['worktree'])}")
+    if not agent:
+        print(f"{name}: " + ("closed, worktree kept" if m.get("kept") else "gone (pane or agent exited)"))
+        msg = last_message(m["session"])
+        if msg:
+            print(f"--- last message ---\n{msg}")
+        return
+    status = agent["agent_status"]
+    print(f"{name}: {status}")
+    if status == "blocked":
+        r = subprocess.run(["herdr", "agent", "read", m["pane"], "--source", "visible"],
+                           capture_output=True, text=True).stdout
+        tail = [l for l in r.splitlines() if l.strip()][-16:]
+        print("--- waiting on this prompt ---\n" + "\n".join(tail))
+    elif status != "working":
+        msg = last_message(m["session"])
+        if msg or transcript(m["session"]):
+            print(f"--- final message ---\n{msg or '(none yet)'}")
+        else:
+            r = subprocess.run(["herdr", "agent", "read", m["pane"], "--source", "visible"],
+                               capture_output=True, text=True).stdout
+            tail = [l for l in r.splitlines() if l.strip()][-30:]
+            print("--- no transcript found, so background jobs cannot be seen and this is the pane's screen, "
+                  "which may be cut off. Transcript saving may be off ---\n" + "\n".join(tail))
+
+
+def cmd_wait(a):
+    m = member(synced()[0], a.name)
+    if m.get("pending"):
+        deliver(a.name, a.timeout)
+        m = load().get(a.name, m)
+    deadline = time.time() + a.timeout / 1000 if a.timeout else None
+    paused_at = None
+    while True:
+        args = ["agent", "wait", m["pane"]]
+        if deadline:
+            args += ["--timeout", str(max(1, int((deadline - time.time()) * 1000)))]
+        herdr(*args, check=False)
+        time.sleep(1)  # let the transcript flush
+        reg, alive = synced()
+        m = reg.get(a.name, m)
+        agent = locate(a.name, m, alive)
+        settled = agent and agent["agent_status"] not in ("working", "blocked")
+        jobs = pending_jobs(m.get("session")) if settled else 0
+        if not jobs:
+            break
+        paused_at = paused_at or time.time()
+        if time.time() - paused_at > JOB_PATIENCE or (deadline and time.time() >= deadline):
+            print(f"{a.name}: paused with {jobs} background job(s) still running, so this may not be its final message")
+            break
+        # Check back in slices, because a job can finish and wake the agent between looks.
+        if herdr("agent", "wait", m["pane"], "--until", "working", "--timeout", "30000", check=False):
+            paused_at = None
+    report(a.name, m, alive)
+
+
+def cmd_result(a):
+    reg, alive = synced()
+    report(a.name, member(reg, a.name), alive)
+
+
+def cmd_status(a):
+    reg, alive = synced()
+    limit, area, _ = capacity()
+    print(f"window {area['width']}x{area['height']}, {limit} subagents per tab")
+    if not reg:
+        print("no subagents")
+        return
+    for name, m in reg.items():
+        agent = locate(name, m, alive)
+        state = agent["agent_status"] if agent else "kept" if m.get("kept") else "gone"
+        w = m.get("worktree")
+        print(f"{name:<20} {state:<9} {m['pane']:<10} {m['cwd']}" + (f"  [{w['branch']}]" if w else ""))
+
+
+def cmd_rename(a):
+    reg, alive = synced()
+    agent = locate(a.name, member(reg, a.name), alive)
+    if not agent:
+        die(f"{a.name} is gone")
+    tab = agent["tab_id"]
+    if tab == os.environ["HERDR_TAB_ID"]:
+        die(f"{a.name} is in the primary tab, which herd does not rename")
+    herdr("tab", "rename", tab, a.label)
+    for n, x in reg.items():
+        other = locate(n, x, alive)
+        if other and other["tab_id"] == tab:
+            x["group"] = a.label
+    save(reg)
+    print(f"tab renamed to {a.label}")
+
+
+def cmd_close(a):
+    reg, alive = synced()
+    names = list(reg) if a.all else a.names
+    if not names:
+        die("give names or --all")
+    for name in names:
+        member(reg, name)
+    for name in names:
+        m = reg[name]
+        agent = locate(name, m, alive)
+        if agent and agent["agent_status"] in ("working", "blocked") and not a.force:
+            print(f"{name}: still {agent['agent_status']}, skipped (use --force)")
+            continue
+        if not m.get("kept"):
+            herdr("pane", "close", m["pane"], check=False)
+        w = m.get("worktree")
+        if not w:
+            del reg[name]
+            print(f"{name}: closed")
+            continue
+        if agent:
+            time.sleep(1)  # let the agent stop writing before judging the worktree
+            if locate(name, m, live()):
+                print(f"{name}: pane did not close, worktree left alone: {worktree_line(w)}")
+                continue
+        why = release(w)  # --force never reaches this decision
+        if why:
+            m["kept"] = True
+            print(f"{name}: pane closed, work kept ({', '.join(why)})\n  {worktree_line(w)}\n"
+                  f"  Once it is merged or dealt with, run herd close {name} again to clean up.")
+        else:
+            del reg[name]
+            print(f"{name}: closed, worktree removed")
+    save(reg)
+
+
+def describe(m, agent):
+    """Resume state of one entry: running, settled, blocked, gone, or kept."""
+    if m.get("kept"):
+        return "kept"
+    if not agent:
+        return "gone"
+    status = agent["agent_status"]
+    return {"idle": "settled", "done": "settled", "blocked": "blocked"}.get(status, "running")
+
+
+def other_registries(alive):
+    """Print registries left by other panes, newest first, so one can be adopted."""
+    paths = [p for p in glob.glob(os.path.join(STATE_DIR, "*.json")) if p != REG_PATH and load(p)]
+    if not paths:
+        print("No other registries found.")
+        return
+    print("Other registries:")
+    for path in sorted(paths, key=os.path.getmtime, reverse=True):
+        reg = load(path)
+        pane = os.path.basename(path)[:-len(".json")].replace("_", ":")
+        running = sum(1 for n, m in reg.items() if locate(n, m, alive))
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(path)))
+        owner = ", pane still hosts a live agent" if pane in alive else ""
+        print(f"  {pane:<10} {len(reg)} subagents, {running} live, updated {when}{owner}: {', '.join(reg)}")
+    print("Adopt one with: herd resume --from <pane-id>")
+
+
+def adopt(source, force):
+    """Move another pane's registry entries into this pane's registry."""
+    path = reg_path(source)
+    if path == REG_PATH:
+        die(f"{source} is this pane")
+    theirs = load(path)
+    alive = live()
+    if not theirs:
+        print(f"herd: no registry for {source}", file=sys.stderr)
+        other_registries(alive)
+        sys.exit(1)
+    pane = os.path.basename(path)[:-len(".json")].replace("_", ":")
+    if pane in alive and not force:
+        die(f"pane {pane} still hosts a live agent, which may be using these subagents. "
+            "Pass --force only if it is not their primary")
+    reg = load()
+    clash = {n: m for n, m in theirs.items() if n in reg}
+    reg.update({n: m for n, m in theirs.items() if n not in reg})
+    save(reg)
+    if clash:
+        save(clash, path)
+        print(f"not adopted, name already in use here: {', '.join(clash)} (left in {path})")
+    else:
+        os.remove(path)
+    print(f"adopted {len(theirs) - len(clash)} subagents from {pane}")
+
+
+def cmd_resume(a):
+    if os.environ.get("HERD_CHILD"):
+        die("this pane is a herd subagent, it has no subagents to resume")
+    if a.source:
+        adopt(a.source, a.force)
+    reg, alive = synced()
+    if not reg:
+        print(f"No subagents on record for this pane ({PRIMARY}).")
+        other_registries(alive)
+        return
+    print(f"{len(reg)} subagents on record for this pane ({PRIMARY}):")
+    groups = {}
+    for name, m in reg.items():
+        agent = locate(name, m, alive)
+        state = describe(m, agent)
+        held = agent and m.get("pending")
+        groups.setdefault("running" if held else state, []).append(name)
+        print(f"{name:<20} {state:<8} {m['pane']:<10} {m['cwd']}")
+        if held:
+            print("  brief not delivered: held at a startup prompt that the user must answer")
+        w = m.get("worktree")
+        if w:
+            print(f"  {worktree_line(w)}")
+            if not agent:
+                print(f"  holds: {', '.join(unsaved(w)) or 'nothing new, safe to close'}")
+        if not agent and transcript(m["session"]):
+            print(f"  transcript: {transcript(m['session'])}")
+    h = os.path.abspath(sys.argv[0])
+    if groups.get("running"):
+        print("\nStart each of these with Bash run_in_background: true:")
+        for name in groups["running"]:
+            print(f"  {h} wait {name}")
+    else:
+        print("\nNothing is running, so no background waits are needed.")
+    ready = groups.get("settled", []) + groups.get("blocked", [])
+    if ready:
+        print("\nRead these now, since they settled or need the user:")
+        for name in ready:
+            print(f"  {h} result {name}")
+    stale = groups.get("gone", []) + groups.get("kept", [])
+    if stale:
+        print(f"\nGone or kept entries stay listed until closed. {h} result <name> shows the last message.")
+        print(f"Clear them with: {h} close {' '.join(stale)}")
+
+
+def main():
+    if os.environ.get("HERDR_ENV") != "1" or not PRIMARY:
+        die("not running inside herdr")
+    p = argparse.ArgumentParser(prog="herd")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("spawn")
+    s.add_argument("name")
+    s.add_argument("brief", help="task text, or - to read stdin")
+    s.add_argument("--model")
+    s.add_argument("--mode", default="auto", help="auto (default), manual, acceptEdits, plan")
+    s.add_argument("--cwd")
+    s.add_argument("--tab", metavar="LABEL", help="run in a tab with this label, shared by agents using the same label")
+    s.add_argument("--worktree", nargs="?", const="", metavar="BRANCH",
+                   help="run in a git worktree of the --cwd repo on BRANCH (default herd/<name>), reattaching if it exists")
+    s.set_defaults(fn=cmd_spawn)
+    s = sub.add_parser("send")
+    s.add_argument("name")
+    s.add_argument("text", help="message text, or - to read stdin")
+    s.add_argument("--force", action="store_true")
+    s.set_defaults(fn=cmd_send)
+    s = sub.add_parser("wrapup")
+    s.add_argument("names", nargs="*", help="subagents to wrap up, default all")
+    s.add_argument("--force", action="store_true", help="discard any unsent text in a pane, then send")
+    s.set_defaults(fn=cmd_wrapup)
+    s = sub.add_parser("wait")
+    s.add_argument("name")
+    s.add_argument("--timeout", type=int, help="milliseconds")
+    s.set_defaults(fn=cmd_wait)
+    s = sub.add_parser("result")
+    s.add_argument("name")
+    s.set_defaults(fn=cmd_result)
+    s = sub.add_parser("status")
+    s.set_defaults(fn=cmd_status)
+    s = sub.add_parser("rename")
+    s.add_argument("name")
+    s.add_argument("label")
+    s.set_defaults(fn=cmd_rename)
+    s = sub.add_parser("close")
+    s.add_argument("names", nargs="*")
+    s.add_argument("--all", action="store_true")
+    s.add_argument("--force", action="store_true")
+    s.set_defaults(fn=cmd_close)
+    s = sub.add_parser("resume", help="after a restart: reconcile the registry and list the waits to start")
+    s.add_argument("--from", dest="source", metavar="PANE", help="adopt the registry of another pane")
+    s.add_argument("--force", action="store_true", help="adopt even if that pane hosts a live agent")
+    s.set_defaults(fn=cmd_resume)
+    a = p.parse_args()
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()
