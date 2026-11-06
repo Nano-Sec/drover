@@ -20,7 +20,7 @@ $H status                      # window size, subagents per tab, and each subage
 $H rename <name> "<label>"     # rename the tab holding that subagent
 $H close <name> | --all        # skips working or blocked panes unless --force, never deletes unmerged work
 $H resume [--from <pane-id>]   # after a restart: reconcile state and list the waits to start
-$H doctor                      # check herdr and its Claude integration, Python, claude, auto mode, and transcripts
+$H doctor                      # check the setup and say how to fix what fails, works outside herdr too
 ```
 
 The helper sits next to this file, so that path is right however the skill was installed. Shell variables may not carry over between Bash calls, so set `H` in each command or use the full path.
@@ -56,7 +56,7 @@ When the user says they are stopping for now, hand off before closing anything:
 
 ## Defaults
 
-- **Permissions:** auto mode. Use `--mode manual` only if the user asks for approval prompts or the task is risky.
+- **Permissions:** auto mode. Use `--mode manual` only if the user asks for approval prompts or the task is risky. If spawn warns that a pane started in another mode, tell the user, because that pane will stop at approval prompts.
 - **Model:** the user's default. For simple, mechanical work, pass `--model sonnet` or `--model haiku`.
 - **Project context:** a pane loads `CLAUDE.md` from its own folder and parents. If it starts outside the primary's folder, spawn pastes the primary's `CLAUDE.md` files into the brief, up to 20,000 characters each. Memory is per folder and is not passed on, so put anything needed from it in the brief.
 - **Parallel edits:** subagents share a directory unless told otherwise. If two may edit the same repo, pass `--worktree` to each.
