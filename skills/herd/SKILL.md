@@ -1,6 +1,6 @@
 ---
 name: herd
-description: Run subagents as visible Claude sessions in herdr panes, so the user can watch and message each one. Use whenever the user asks for subagents, parallel agents, or delegating work to agents, or invokes /herd, and HERDR_ENV=1. Prefer this over the built-in Agent tool for those requests. Outside herdr, use the Agent tool as normal.
+description: Run subagents as visible Claude sessions in herdr panes, so the user can watch and message each one. Use this instead of the built-in Agent tool whenever the user asks for subagents, parallel agents, background agents, a team of agents, or to delegate, fan out, or split work across agents, or invokes /herd. Load it before calling the Agent tool for those requests. Its first step checks whether the session is inside herdr (HERDR_ENV=1) and falls back to the Agent tool if not. Not for use inside a herd pane (HERD_CHILD=1).
 ---
 
 # Herd
@@ -10,7 +10,7 @@ You are the primary. Each subagent is a full interactive Claude session in its o
 Run everything through the helper:
 
 ```bash
-H=~/.claude/skills/herd/herd
+H="${CLAUDE_SKILL_DIR}/herd"
 $H spawn <name> "<brief>" [--model sonnet] [--mode manual] [--cwd <path>] [--tab "<label>"] [--worktree [branch]]
 $H send <name> "<message>"     # steer a subagent, works mid-task
 $H wrapup [names...] [--force] # ask subagents to commit and write a handoff, default all
@@ -20,13 +20,16 @@ $H status                      # window size, subagents per tab, and each subage
 $H rename <name> "<label>"     # rename the tab holding that subagent
 $H close <name> | --all        # skips working or blocked panes unless --force, never deletes unmerged work
 $H resume [--from <pane-id>]   # after a restart: reconcile state and list the waits to start
+$H doctor                      # check herdr and its Claude integration, Python, claude, auto mode, and transcripts
 ```
+
+The helper sits next to this file, so that path is right however the skill was installed. Shell variables may not carry over between Bash calls, so set `H` in each command or use the full path.
 
 Pass `-` as the brief or message to read it from stdin, which is best for multi-line text. Put `--worktree` after the brief, since it takes an optional branch.
 
 ## Workflow
 
-1. **Check first.** Run `test "$HERDR_ENV" = 1`. If it fails, use the Agent tool instead.
+1. **Check first.** Run `test "$HERDR_ENV" = 1 && test -z "$HERD_CHILD"`. If `HERDR_ENV` is not 1, you are outside herdr, so use the Agent tool instead. If `HERD_CHILD` is set, you are a herd subagent, so do the work yourself.
 2. **Brief fully.** Subagents do not see this conversation. Include the goal, relevant paths, constraints, and what to report. Names should describe the job (`auth-audit`, not `agent1`).
 3. **Spawn**, then start one `$H wait <name>` per subagent with Bash `run_in_background: true`. Never run `wait` in the foreground, and never poll `status` in a loop. Each background wait wakes you when that subagent settles, and you need to stay free to take the user's commands.
 4. **Relay.** When a wait finishes, it already contains the final message. Summarize it for the user, and do not read the full transcript or pane unless something looks wrong.
@@ -49,6 +52,7 @@ When the user says they are stopping for now, hand off before closing anything:
 - **held at the trust prompt:** spawn says so and shows `session pending`. Claude asks once per git root it does not trust yet. Tell the user which pane needs them. Never answer it yourself, never send keys to it, and never edit `~/.claude.json`. Start the usual background `wait` anyway: herd stored the brief, and `wait` delivers it once the user accepts, then waits for the result. `send` is refused until then. If the user declines, the wait reports gone.
 - **gone:** the pane or agent exited. Report it, with the last message if there is one.
 - **send refused for unsent text:** the user is probably typing in that pane. Tell them, and only use `--force` if they say so.
+- **spawn fails, or a result says no transcript was found:** run `$H doctor` and tell the user what it reports.
 
 ## Defaults
 
