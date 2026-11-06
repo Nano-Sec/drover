@@ -1,0 +1,14 @@
+{
+  "name": "herd",
+  "description": "Marketplace for herd, which runs Claude subagents in visible herdr panes.",
+  "owner": {
+    "name": "Abhinav Upadhyay"
+  },
+  "plugins": [
+    {
+      "name": "herd",
+      "source": "./",
+      "description": "Run Claude subagents as visible, steerable sessions in herdr panes."
+    }
+  ]
+}
