@@ -131,7 +131,7 @@ herd's own labels show with this on or off, as long as herdr's pane borders are 
 
 ### herd doctor
 
-`herd doctor` prints PASS, FAIL, or SKIP for each check, with a fix for each failure. It exits with an error if anything failed. A warning is not a failure.
+`herd doctor` prints PASS, WARN, FAIL, or SKIP for each check, with a fix for each failure or warning. It exits with an error if anything failed. A warning does not count as a failure.
 
 | Check | What it looks at |
 | --- | --- |
