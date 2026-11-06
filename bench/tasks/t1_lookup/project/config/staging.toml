@@ -1,0 +1,2 @@
+[billing]
+max_retries = 2

@@ -1,0 +1,9 @@
+{"bugs": [
+ {"name": "write mode on read", "line": 7},
+ {"name": "skips last item", "line": 14},
+ {"name": "mutable default", "line": 19},
+ {"name": "off by one comparison", "line": 29},
+ {"name": "percent over 10", "line": 34},
+ {"name": "reversed reorder test", "line": 39},
+ {"name": "zero becomes one", "line": 45}
+], "tolerance": 2}

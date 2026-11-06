@@ -1,0 +1,6 @@
+[http]
+timeout_seconds = 30
+max_retries = 3
+
+[billing]
+timeout_seconds = 45

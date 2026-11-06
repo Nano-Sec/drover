@@ -1,0 +1,9 @@
+[search]
+max_retries = 5
+
+[billing]
+timeout_seconds = 60
+max_retries = 7
+
+[email]
+max_retries = 4

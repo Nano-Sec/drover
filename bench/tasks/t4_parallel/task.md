@@ -1,0 +1,1 @@
+Implement the three stubs slug.py, roman.py and wrap.py, so that each does what its docstring says. Use three subagents in parallel, one per file. Each subagent edits only its own file. Do not add other files.

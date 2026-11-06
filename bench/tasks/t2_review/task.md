@@ -1,0 +1,1 @@
+Review inventory.py for bugs. The docstrings state the intended behaviour. Write the findings to review.json in this folder, as a JSON array of objects with the keys "line" (the line number of the faulty code) and "problem" (one sentence). Include real bugs only, not style or design suggestions. Do not change inventory.py.

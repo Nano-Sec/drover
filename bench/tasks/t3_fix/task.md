@@ -1,0 +1,1 @@
+A user reports that free_slots in intervals.py sometimes offers a time that is already booked. test_intervals.py shows one case. Find and fix the bug or bugs in intervals.py so that it does what its docstrings say. Do not change the tests.
