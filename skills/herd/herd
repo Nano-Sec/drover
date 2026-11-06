@@ -48,6 +48,8 @@ NO_BOX = "It may be showing a dialog, or Claude may have changed its screen."
 
 MAX_PASTE = 20000  # characters of any one file pasted into a brief
 JOB_PATIENCE = 1800  # seconds to wait on a paused pane before reporting it anyway
+JOB_SLICE = 30000  # milliseconds between looks at a paused pane
+JOB_MARKS = ("run_in_background", "TaskStop", "tool_result")  # the transcript lines pending_jobs parses
 
 
 def die(msg, code=1):
@@ -485,9 +487,15 @@ def transcript_mode(session):
 
 
 def pending_jobs(session):
-    """Background jobs the agent started that have not reported back yet. Agents end their
-    turn while these run, so an idle pane with jobs pending has paused, not finished. An
-    unreadable transcript counts as none, and report() then says jobs cannot be seen."""
+    """Background jobs the agent started that have not ended yet. Agents end their turn while
+    these run, so an idle pane with jobs pending has paused, not finished. An unreadable
+    transcript counts as none, and report() then says jobs cannot be seen.
+
+    A job starts with run_in_background on its tool_use, or with backgroundTaskId on its result,
+    which is all a foreground command moved to the background leaves. It ends with a task
+    notification naming either id, with a TaskStop result naming its task id, because a stopped
+    job writes no notification, or with is_error on its result, because then it never ran.
+    Anything else ends nothing, so a shape herd does not know keeps the job counted as running."""
     path = transcript(session)
     if not path:
         return 0
@@ -495,21 +503,37 @@ def pending_jobs(session):
         lines = transcript_lines(path)
     except TranscriptError:
         return 0
-    started, finished = [], set()
+    jobs, stops, ended = {}, set(), set()  # jobs maps each tool use id to its task id, if known
     for line in lines:
         if "<task-notification>" in line:
-            finished.update(re.findall(r"tool-use-id>([^<\\]+)", line))
-        if "run_in_background" not in line:
+            ended.update(re.findall(r"(?:tool-use|task)-id>([^<\\]+)", line))
+        if not any(mark in line for mark in JOB_MARKS):
             continue
         d = parse_entry(line)
-        if not d or d["type"] != "assistant" or d.get("isSidechain"):
+        if not d or d["type"] not in ("assistant", "user") or d.get("isSidechain"):
             continue
         try:
-            started += [c.get("id") for c in blocks(d) if c.get("type") == "tool_use"
-                        and isinstance(c.get("input"), dict) and c["input"].get("run_in_background")]
+            content = blocks(d)
         except TranscriptError:
             continue
-    return len([j for j in started if j not in finished])
+        outcome = d.get("toolUseResult")
+        outcome = outcome if isinstance(outcome, dict) else {}
+        task, stopped = outcome.get("backgroundTaskId"), outcome.get("task_id")
+        for c in content:
+            if c.get("type") == "tool_use":
+                if c.get("name") == "TaskStop":
+                    stops.add(c.get("id"))
+                elif isinstance(c.get("input"), dict) and c["input"].get("run_in_background"):
+                    jobs[c.get("id")] = None
+            elif c.get("type") == "tool_result" and isinstance(c.get("tool_use_id"), str):
+                use = c["tool_use_id"]
+                if isinstance(task, str):
+                    jobs[use] = task
+                elif c.get("is_error") is True:
+                    jobs.pop(use, None)
+                elif use in stops and isinstance(stopped, str):
+                    ended.add(stopped)
+    return len([use for use, task in jobs.items() if use not in ended and task not in ended])
 
 
 def git(cwd, *args):
@@ -930,15 +954,19 @@ def report(name, m, alive):
 
 def cmd_wait(a):
     m = member(synced()[0], a.name)
+    deadline = time.time() + a.timeout / 1000 if a.timeout else None
+
+    def left():
+        return max(1, int((deadline - time.time()) * 1000))
+
     if m.get("pending"):
         deliver(a.name, a.timeout)
         m = load().get(a.name, m)
-    deadline = time.time() + a.timeout / 1000 if a.timeout else None
     paused_at = None
     while True:
         args = ["agent", "wait", m["pane"]]
         if deadline:
-            args += ["--timeout", str(max(1, int((deadline - time.time()) * 1000)))]
+            args += ["--timeout", str(left())]
         herdr(*args, check=False)
         time.sleep(1)  # let the transcript flush
         reg, alive = synced()
@@ -954,7 +982,8 @@ def cmd_wait(a):
                   "If it looks finished, Claude may have changed how its transcript records jobs")
             break
         # Check back in slices, because a job can finish and wake the agent between looks.
-        if herdr("agent", "wait", m["pane"], "--until", "working", "--timeout", "30000", check=False):
+        look = min(JOB_SLICE, left()) if deadline else JOB_SLICE
+        if herdr("agent", "wait", m["pane"], "--until", "working", "--timeout", str(look), check=False):
             paused_at = None
     report(a.name, m, alive)
 
