@@ -15,6 +15,14 @@ drover works for any task Claude can do, such as code changes, reviews, research
 
 It is for developers who already use Claude Code, want a few agents running at once, and want to stay involved while they run.
 
+## What it costs
+
+drover is for visibility and control. It is not cheaper or faster than the built-in Agent tool. In the [benchmark](bench/README.md), with the same tasks and the same sonnet primary, default drover panes used about 1.5x to 2x the tokens of native subagents and 1.3x to 1.5x the cost, and were slower (28 to 43 s against 14 to 24 s). Each pane is a full session with its own startup prompt, and the primary spends extra turns on spawn, wait, and close. Quality was the same in every run, but the tasks were easy, so quality is untested on hard work. That benchmark had two repeats per cell.
+
+The `run` command and multi-pane `wait` cut the primary's turns. A re-measure with one run per task (not conclusive) gave, on a one-pane lookup, 7 primary turns against 8, about 8 percent fewer tokens, and the same cost ($0.196). On three parallel panes it gave 7 turns against 10 or 11, 20 percent fewer tokens, and 8 percent lower cost ($0.345 against $0.377). That is still above native subagents, at about 1.6x tokens and 1.5x cost on the lookup and 1.2x tokens and 1.3x cost on the three-pane task. `--tools lean` cuts a pane's first prompt to a quarter in a trivial test, but removes tools, so it is opt-in.
+
+**Use panes** when you want to watch an agent, message it mid-task, or answer its prompts, and for long work that needs worktrees, handoffs, or resume after a restart. **Use native subagents** for everything else, such as quick lookups, reviews, and parallel edits you do not need to watch. They are cheaper and faster, and that is Claude's default.
+
 ## Requirements
 
 - [herdr](https://herdr.dev) 0.8.0 or newer (the oldest tested version), with its Claude integration: `herdr integration install claude`
@@ -200,7 +208,7 @@ Use drover if you want to stay in one session and work alongside a few agents, s
 - **Claude Code only.** Subagents are always Claude sessions.
 - **Inside herdr only.** Apart from `drover doctor`, drover does nothing outside a herdr pane.
 - **Limited panes per tab.** Between 1 and 8 fit, depending on window size. Past that, drover opens more tabs.
-- **Token cost.** Each pane is a full session with its own context and tokens. Idle panes get costlier to resume once the prompt cache expires, so close them when done.
+- **Token cost.** Each pane is a full session with its own context and tokens, see [What it costs](#what-it-costs). Idle panes get costlier to resume once the prompt cache expires, so close them when done.
 - **No nesting.** A subagent cannot spawn its own subagents.
 - **Context is not inherited.** Subagents do not see your conversation, only the brief. A pane loads `CLAUDE.md` from its own folder and parents, and drover pastes in the primary's files if the pane starts elsewhere, up to 20,000 characters each. The primary's memory is not passed to panes, so anything needed from it must go in the brief.
 - **Paused panes.** `wait` treats an idle pane with background jobs still running as paused, and holds for up to 30 minutes per pause before reporting anyway.

@@ -1,6 +1,6 @@
 # Drover benchmark
 
-Status: Part 1 and Part 2 are done. Do not base guidance on the pilot numbers below, use the measured Part 2 section.
+Status: Part 1, Part 2, and Part 3 are done. Do not base guidance on the pilot numbers below, use the measured Part 2 section.
 
 ## Files
 
@@ -99,3 +99,22 @@ Conclusions:
 Limits: 2 repeats; easy tasks; 3 runs in parallel shared rate limits and cache, which may affect wall time; auto-mode
 classifier calls may be missing from transcripts (unchecked); a drover capability test of Arm C on harder work was not done;
 one sonnet native subagent first prompt was about 28k tokens (single sample type, not the 3.5k quoted for small Haiku ones).
+
+## Part 3: drover with `run` and `wait a b c` (measured)
+
+Arm B only, tasks t1 and t4, **1 repeat (2 runs)**, sonnet primary in auto mode, with the helper and SKILL.md from this branch copied into each run folder as a project skill (not an installed copy). The only change to the primary's instructions was "every spawn or run" in place of "every spawn". Same scorers. Total 1,138,007 tokens including cache reads, under the 1.5M cap. Raw rows: `results/part3.jsonl`, log `results/part3_run.log`. Part 2 numbers are the median (mean of two) of its two B runs, from `results/part2.jsonl`.
+
+| task | Part 2 B turns | Part 3 turns | Part 2 primary tokens | Part 3 primary tokens | Part 2 total tokens | Part 3 total tokens | Part 2 cost | Part 3 cost | Score | Wall |
+|---|---|---|---|---|---|---|---|---|---|---|
+| t1 lookup | 8 | 7 | 350k | 307k | 510k | 467k | $0.197 | $0.196 | 1.0 / 1.0 | 29.6 s / 34.1 s |
+| t4 parallel x3 | 10.5 | 7 | 480k | 311k | 839k | 671k | $0.377 | $0.345 | 1.0 / 1.0 | 43.0 s / 42.3 s |
+
+Native subagents (Arm A) for reference: t1 296k tokens, $0.133, 4 primary turns (pilot); t4 549k, $0.271. Part 3 is still 1.6x tokens and 1.5x cost on t1, and 1.2x tokens and 1.3x cost on t4.
+
+What the primaries did: t1 loaded the skill, ran a separate `HERDR_ENV` check, made one `run ... &` call in the background, read its output, then ran `touch .bench_done`. t4 loaded the skill, checked and read the files, ran one `spawn` call for the three panes, ran one background `wait slug roman wrap --close`, read its output, then touched `.bench_done`. Both used the new commands as the skill describes, with no polling.
+
+Findings:
+- Turns dropped on t4 (10.5 to 7), where `wait a b c --close` replaced three waits and three closes. On t1 they dropped only from 8 to 7, not to the 4 of native. The turns that remain are not spawn, wait, or close: the skill load, the separate environment check (step 1 of the skill), reading the background output file, the `touch .bench_done` the harness requires, and the final summary. I did not change the skill to remove the check and re-measure, because the budget allowed no second run and tuning against two runs would prove nothing. The helper already refuses outside herdr and inside a pane, so the check could be dropped or merged into the run command.
+- Cost did not follow tokens on t1: tokens fell 8 percent, cost stayed at $0.196, since most cost is cache writes of the primary's startup and the pane's own session. t4 fell 20 percent in tokens and 8 percent in cost.
+- Quality was 1.0 in both runs, so it separates nothing.
+- Limits: one run per task, so the differences on t1 (7 against 8 turns, +4 s wall) are within what one run can show. Wall time is not better. This does not show drover matching native subagents.
