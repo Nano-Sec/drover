@@ -31,7 +31,7 @@ Pass `-` as the brief or message to read it from stdin, which is best for multi-
 
 ## Workflow
 
-1. **Check first.** Run `test "$HERDR_ENV" = 1 && test -z "$DROVER_CHILD"`. If `HERDR_ENV` is not 1, you are outside herdr, so use the Agent tool instead. If `DROVER_CHILD` is set, you are a drover subagent, so do the work yourself.
+1. **No separate check.** The helper refuses in the two cases that matter. If it says `not running inside herdr`, use the Agent tool instead. If it says this pane is a drover subagent, do the work yourself.
 2. **Brief fully.** Subagents do not see this conversation. Include the goal, paths, constraints, and what to report.
 3. **One pane:** a single Bash call with `run_in_background: true` running `$H run <name> "<brief>"`. It spawns, waits, prints the result, and closes the pane. **Several panes:** spawn each (they take turns on a lock), then one background call `$H wait a b c --close`. Then end your turn: you are woken when it finishes, so never poll, never run `wait` in the foreground, and never loop on `status`. If a pane is blocked, `wait` returns early with its prompt and the names still running.
 4. **Relay.** The output already contains the final message. Summarize it for the user, and do not read the full transcript or pane unless something looks wrong.

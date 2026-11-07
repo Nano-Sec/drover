@@ -80,10 +80,10 @@ See [drover doctor](#drover-doctor) for what it checks.
 Claude uses built-in subagents by default. The skill's description tells it to use drover when you ask for panes, visible agents, or drover by name, and that is usually enough. A description is still only a hint. For a firmer rule, add this line to your `~/.claude/CLAUDE.md`:
 
 ```text
-When I ask for subagents or parallel agents and HERDR_ENV=1, use the drover skill so they run in visible herdr panes instead of the built-in Agent tool. This does not apply inside a drover pane (DROVER_CHILD=1).
+When I ask for panes or visible agents, or want to watch or message an agent, and HERDR_ENV=1, use the drover skill instead of the built-in Agent tool. This does not apply inside a drover pane (DROVER_CHILD=1).
 ```
 
-That line sends every subagent request to panes, so drop it if you want drover only when you ask for it. Outside herdr, drover stays out of the way and Claude uses its built-in Agent tool.
+Ordinary subagent requests still use the built-in Agent tool. To send all of them to panes, say so in that line and accept the cost above. Outside herdr, drover stays out of the way and Claude uses its built-in Agent tool.
 
 ## Quick example
 
