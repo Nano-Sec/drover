@@ -9,7 +9,7 @@ Run Claude Code subagents as real, visible sessions in [herdr](https://herdr.dev
 
 Claude Code's built-in subagents run out of sight. You give a task, and you get back a summary. If one goes the wrong way, you find out at the end.
 
-drover replaces that with panes you can see. It is a Claude Code skill plus a small Python helper. When you ask your Claude session (the primary) for subagents, it opens each one as a full interactive Claude session in its own herdr pane. The primary writes the brief, waits, and relays the result. While that happens you can read any pane, type into it, or tell the primary to steer it.
+drover gives you visibility and control instead: panes you can see and type into. It does not save tokens or time, and it costs more than built-in subagents (see [What it costs](#what-it-costs)). It is a Claude Code skill plus a small Python helper. When you ask your Claude session (the primary) for subagents, it opens each one as a full interactive Claude session in its own herdr pane. The primary writes the brief, waits, and relays the result. While that happens you can read any pane, type into it, or tell the primary to steer it.
 
 drover works for any task Claude can do, such as code changes, reviews, research, or writing.
 
@@ -69,20 +69,20 @@ See [drover doctor](#drover-doctor) for what it checks.
 
 ### Optional: a stronger automatic trigger
 
-The skill's description tells Claude to use drover whenever you ask for subagents or delegation, and that is usually enough. A description is still only a hint. For a firmer rule, add this line to your `~/.claude/CLAUDE.md`:
+Claude uses built-in subagents by default. The skill's description tells it to use drover when you ask for panes, visible agents, or drover by name, and that is usually enough. A description is still only a hint. For a firmer rule, add this line to your `~/.claude/CLAUDE.md`:
 
 ```text
 When I ask for subagents or parallel agents and HERDR_ENV=1, use the drover skill so they run in visible herdr panes instead of the built-in Agent tool. This does not apply inside a drover pane (DROVER_CHILD=1).
 ```
 
-Outside herdr, drover stays out of the way and Claude uses its built-in Agent tool.
+That line sends every subagent request to panes, so drop it if you want drover only when you ask for it. Outside herdr, drover stays out of the way and Claude uses its built-in Agent tool.
 
 ## Quick example
 
 Start herdr, open Claude Code in a pane, and ask in plain language:
 
 ```text
-Use two subagents with worktrees: one to find why the login test is flaky,
+Use two drover panes with worktrees: one to find why the login test is flaky,
 and one to add pagination to the orders API.
 ```
 
@@ -102,9 +102,10 @@ Claude normally runs these for you, so you rarely need to type them. They do all
 
 | Command | What it does |
 | --- | --- |
-| `drover spawn <name> "<brief>"` | Start a subagent. Options: `--model`, `--mode`, `--cwd`, `--tab "<label>"`, `--label "<text>"`, `--worktree [branch]`. |
+| `drover run <name> "<brief>"` | Spawn, wait, print the result, and close the pane, in one command. Takes every spawn option, plus `--keep` to skip the close and `--timeout`. A blocked, held, or timed out pane stays open and is reported. |
+| `drover spawn <name> "<brief>"` | Start a subagent. Options: `--model`, `--effort low\|medium\|high\|xhigh\|max`, `--preset scout\|build`, `--tools lean`, `--mode`, `--cwd`, `--tab "<label>"`, `--label "<text>"`, `--worktree [branch]`. |
 | `drover send <name> "<message>"` | Send a message to a subagent, even mid-task. Refused while the pane waits on a prompt, even with `--force`. Also refused if the pane holds unsent text or its input box cannot be found, unless you pass `--force`. |
-| `drover wait <name>` | Block until it settles, then print its final message or the prompt it is stuck on. |
+| `drover wait <name> [name...]` | Block until the panes settle, then print each final message or the prompt it is stuck on. With several names it returns early if one is blocked, naming the panes still running. `--close` closes the ones that settled normally. |
 | `drover result <name>` | Print the same output without waiting. |
 | `drover status` | Show the window size, how many subagents fit per tab, and each subagent's state. |
 | `drover rename <name> "<label>"` | Rename the tab holding a subagent. Refused in the primary's tab. |
@@ -115,6 +116,8 @@ Claude normally runs these for you, so you rarely need to type them. They do all
 | `drover doctor` | Check your setup. |
 
 Pass `-` as the brief or message to read it from stdin.
+
+`--preset scout` is haiku with low effort and `--preset build` is sonnet with medium effort. An explicit `--model` or `--effort` overrides the preset. `--tools lean` is opt-in and never the default. It starts the pane with only Bash, Read, Edit, Write, Glob, Grep, ToolSearch, WebFetch, and WebSearch, and no MCP servers, which cuts the pane's first prompt to about a quarter. Such a pane cannot use Agent, Skill, AskUserQuestion, Artifact, Monitor, TaskStop, ScheduleWakeup, cron or worktree tools, or any MCP server. It keeps typed slash commands and `CLAUDE.md`. This was only checked on trivial tasks.
 
 ### Pane labels
 

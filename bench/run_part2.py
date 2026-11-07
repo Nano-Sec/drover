@@ -20,7 +20,7 @@ SPLIT = {"t4_parallel": 3}  # subagents a task asks for, default 1
 ARM_A = ("Delegate this work to {who}, using the built-in Agent tool with model sonnet. "
          "Do not use herd, drover, or herdr panes, and do not do the work yourself.")
 ARM_P = ("Delegate this work to {who}, using drover panes: load the drover skill and follow it. Pass --model sonnet "
-         "to every spawn. Do not use the herd skill or the Agent tool, and do not do the work yourself.")
+         "to every spawn or run. Do not use the herd skill or the Agent tool, and do not do the work yourself.")
 TAIL = ("When the work is finished and every subagent is done or closed, run `touch .bench_done` in this folder as your "
         "very last action. Nobody will answer questions during this task.")
 

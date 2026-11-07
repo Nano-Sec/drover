@@ -116,6 +116,28 @@ class Plain(LiveCase):
         self.assertIn("live-a: closed", closed)
         self.assertNotIn("live-a", self.box.registry())
 
+    def test_run_spawns_waits_and_closes(self):
+        self.close_later("live-r")
+        code, out = self.box.h("run", "live-r", "Reply with exactly RUN_OK. No tools.", "--preset", "scout", "--timeout", "150000")
+        if HELD in out:
+            self.skipTest(f"Claude does not trust {self.cwd} yet, and tests never answer that prompt")
+        self.assertEqual(code, 0, out)
+        self.assertIn("effort low", out)
+        self.assertIn("RUN_OK", out)
+        self.assertIn("live-r: closed", out)
+        self.assertNotIn("live-r", self.box.registry())
+
+    def test_wait_on_several_panes_and_close(self):
+        for name in ("live-m1", "live-m2"):
+            self.close_later(name)
+            self.spawn(name, f"Reply with exactly {name.upper()}_OK. No tools.")
+        code, out = self.box.h("wait", "live-m1", "live-m2", "--close", "--timeout", "150000")
+        self.assertEqual(code, 0, out)
+        self.assertIn("LIVE-M1_OK", out)
+        self.assertIn("LIVE-M2_OK", out)
+        self.assertIn("live-m1: closed", out)
+        self.assertIn("live-m2: closed", out)
+
     def test_real_formats_still_match(self):
         self.spawn("live-f", "Reply with exactly FORMAT_OK. No tools.")
         self.assertIn("FORMAT_OK", self.wait("live-f"))

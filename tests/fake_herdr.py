@@ -232,6 +232,11 @@ def agent_cmd(state, verb, args):
         p["prompts"].append(p["draft"] + text)  # a prompt sent on a draft merges with it
         p["draft"] = ""
         p["agent"]["agent_status"] = "working"
+        if p["agent"].get("name") in state.get("block_on_prompt", []):  # a test asks this agent to stop at a prompt
+            p["agent"]["agent_status"] = "blocked"
+            p["screen"] = "Do you want to proceed?\n 1. Yes\n"
+        if p["agent"].get("name") in state.get("busy_on_prompt", []):  # and this one to keep working
+            p["busy"] = True
         return ok("agent_prompted", command, agent=agent_view(pid, p))
     if verb == "wait":
         pos, flags = parse(args, values=["--timeout"], repeated=["--until"])

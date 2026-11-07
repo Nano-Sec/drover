@@ -31,7 +31,7 @@ REG_PATH = reg_path(PRIMARY)
 
 BRIEF = """You are a subagent named {name}, running in your own herdr pane. A primary Claude session delegated this task to you, and the user can watch and message you here directly. Treat messages in this pane as coming from the user or the primary.
 
-Rules: do the task yourself and do not start further subagents or panes. The primary reads only your final message, so end with a complete, self-contained report of what you did and found, including file paths.
+Rules: do the task yourself and do not start further subagents or panes. Never poll: to wait for anything, run one blocking command or start one background job, then end your turn and you will be woken when it finishes. The primary reads only your final message, so end with a complete, self-contained report of what you did and found, including file paths.
 
 Task:
 {brief}"""
@@ -47,6 +47,14 @@ HANDOFF_NOTE = "This continues earlier work. Here is the handoff from the last s
 CONTEXT_NOTE = "Project context from {path}, which your folder does not load automatically:\n\n{text}\n\n---\n\n"
 
 NO_BOX = "It may be showing a dialog, or Claude may have changed its screen."
+
+PRESETS = {"scout": ("haiku", "low"), "build": ("sonnet", "medium")}  # name: (model, effort)
+EFFORTS = ["low", "medium", "high", "xhigh", "max"]
+LEAN_TOOLS = ["--tools", "Bash,Read,Edit,Write,Glob,Grep,ToolSearch,WebFetch,WebSearch", "--strict-mcp-config"]
+LEAN_LOSES = ("a lean pane cannot use Agent, Skill, AskUserQuestion, Artifact, Monitor, TaskStop, ScheduleWakeup, "
+              "cron or worktree tools, or any MCP server. It keeps Bash, the file tools, web tools through ToolSearch, "
+              "typed slash commands, and CLAUDE.md")
+MULTI_SLICE = 5000  # milliseconds between looks when waiting on several panes
 
 MAX_PASTE = 20000  # characters of any one file pasted into a brief
 JOB_PATIENCE = 1800  # seconds to wait on a paused pane before reporting it anyway
@@ -717,31 +725,41 @@ def startup_session(pane):
     return None
 
 
+def try_deliver(name):
+    """One attempt to hand over a brief held at a startup prompt. True when nothing is left to
+    do: it was delivered, or the agent is gone. False while the prompt is still unanswered."""
+    reg, alive = synced()
+    m = reg.get(name)
+    agent = locate(name, m, alive) if m else None
+    if not agent:
+        return True
+    if agent["agent_status"] != "blocked" and m.get("session"):
+        auto = m.get("mode") == "auto"
+        checked = confirm_auto(name, m["pane"]) if auto else None
+        submit(m["pane"], m["pending"])
+        with editing() as reg:
+            if name in reg:
+                reg[name].pop("pending", None)
+                reg[name]["mode"] = checked or m.get("mode")
+        if auto and not checked:
+            recheck_auto(name, m["session"])
+        return True
+    return False
+
+
 def deliver(name, timeout_ms):
     """Hand over a brief held at a startup prompt, once the user has answered it."""
     deadline = time.time() + timeout_ms / 1000 if timeout_ms else None
     while not deadline or time.time() < deadline:
-        reg, alive = synced()
-        m = reg.get(name)
-        agent = locate(name, m, alive) if m else None
-        if not agent:
-            return
-        if agent["agent_status"] != "blocked" and m.get("session"):
-            auto = m.get("mode") == "auto"
-            checked = confirm_auto(name, m["pane"]) if auto else None
-            submit(m["pane"], m["pending"])
-            with editing() as reg:
-                if name in reg:
-                    reg[name].pop("pending", None)
-                    reg[name]["mode"] = checked or m.get("mode")
-            if auto and not checked:
-                recheck_auto(name, m["session"])
+        if try_deliver(name):
             return
         time.sleep(2)
 
 
-def start_claude(name, pane, mode, model):
+def start_claude(name, pane, mode, model, effort=None, tools=None):
     native = ["--permission-mode", mode, "-n", name] + (["--model", model] if model else [])
+    native += ["--effort", effort] if effort else []
+    native += LEAN_TOOLS if tools == "lean" else []
     return herdr("agent", "start", name, "--kind", "claude", "--pane", pane,
                  "--timeout", "45000", "--", *native, check=False)
 
@@ -752,14 +770,14 @@ def pane_output(pane):
     return r if isinstance(r, str) else ""
 
 
-def start_in_pane(name, pane, mode, model):
+def start_in_pane(name, pane, mode, model, effort=None, tools=None):
     """Start Claude in the pane, retrying while its shell comes up. If auto mode will not start,
     try FALLBACK_MODE, even with no sign that auto is the cause: Claude's refusal may be worded
     differently, and the fallback only adds approval prompts. Returns (agent start result or
     None, mode used), and the caller says so if the mode changed."""
     for _ in range(5):
         time.sleep(1)
-        started = start_claude(name, pane, mode, model)
+        started = start_claude(name, pane, mode, model, effort, tools)
         if started:
             return started, mode
         if mode == "auto" and AUTO_REFUSED.search(pane_output(pane)):
@@ -768,7 +786,7 @@ def start_in_pane(name, pane, mode, model):
         return None, mode
     for _ in range(2):
         time.sleep(1)
-        started = start_claude(name, pane, FALLBACK_MODE, model)
+        started = start_claude(name, pane, FALLBACK_MODE, model, effort, tools)
         if started:
             return started, FALLBACK_MODE
     return None, mode
@@ -808,6 +826,8 @@ def spawn(a):
     brief = a.brief.strip()
     if not brief:
         die("empty brief")
+    scout_model, scout_effort = PRESETS.get(a.preset, (None, None))
+    model, effort = a.model or scout_model, a.effort or scout_effort  # explicit flags beat the preset
     handoff = os.path.join(HANDOFFS, a.name + ".md")
     if os.path.isfile(handoff):
         brief = HANDOFF_NOTE.format(path=handoff, text=paste(handoff)) + brief
@@ -822,7 +842,7 @@ def spawn(a):
         brief = CONTEXT_NOTE.format(path=path, text=paste(path)) + brief
     try:
         pane, group = place(reg, cwd, a.name, a.tab)
-        started, mode = start_in_pane(a.name, pane, a.mode, a.model)
+        started, mode = start_in_pane(a.name, pane, a.mode, model, effort, a.tools)
         if not started:
             tail = pane_output(pane).strip()[-400:]
             herdr("pane", "close", pane, check=False)
@@ -839,8 +859,12 @@ def spawn(a):
     session = session_id(started["agent"]) or startup_session(pane)
     checked = confirm_auto(a.name, pane) if session and mode == "auto" else mode
     mode = checked or mode
-    entry = {"pane": pane, "session": session, "cwd": cwd, "mode": mode, "model": a.model, "group": group,
+    entry = {"pane": pane, "session": session, "cwd": cwd, "mode": mode, "model": model, "group": group,
              "label": label}
+    if effort:
+        entry["effort"] = effort
+    if a.tools:
+        entry["tools"] = a.tools
     if wt:
         entry["worktree"] = wt
         brief += WORKTREE_NOTE.format(**wt) + (REATTACH_NOTE if reattached else "")
@@ -854,7 +878,8 @@ def spawn(a):
         if not checked:
             mode = recheck_auto(a.name, session) or mode
     where = f"tab '{group}'" if group else "the primary tab"
-    print(f"{a.name} started in {pane}, {where} ({mode}, {a.model or 'default model'}), session {session or 'pending'}")
+    print(f"{a.name} started in {pane}, {where} ({mode}, {model or 'default model'}"
+          f"{', effort ' + effort if effort else ''}{', lean tools' if a.tools else ''}), session {session or 'pending'}")
     if wt:
         print(f"worktree {how}: {worktree_line(wt)}")
         if reattached:
@@ -998,17 +1023,20 @@ def report(name, m, alive):
             print(f"--- final message ---\n{msg or '(none yet)'}")
 
 
-def cmd_wait(a):
-    m = member(synced()[0], a.name)
-    deadline = time.time() + a.timeout / 1000 if a.timeout else None
+def await_pane(name, timeout):
+    """Block until one pane settles. Returns (entry, live agents, how it ended): settled, blocked,
+    held (brief not delivered yet), gone, timeout (still working), or paused (background jobs)."""
+    m = member(synced()[0], name)
+    deadline = time.time() + timeout / 1000 if timeout else None
 
     def left():
         return max(1, int((deadline - time.time()) * 1000))
 
     if m.get("pending"):
-        deliver(a.name, a.timeout)
-        m = load().get(a.name, m)
+        deliver(name, timeout)
+        m = load().get(name, m)
     paused_at = None
+    end = None
     while True:
         args = ["agent", "wait", m["pane"]]
         if deadline:
@@ -1016,8 +1044,8 @@ def cmd_wait(a):
         herdr(*args, check=False)
         time.sleep(1)  # let the transcript flush, and pace this loop when herdr returns at once
         reg, alive = synced()
-        m = reg.get(a.name, m)
-        agent = locate(a.name, m, alive)
+        m = reg.get(name, m)
+        agent = locate(name, m, alive)
         # Any pane move ends herdr's wait with an error, so only the agent's state says it stopped.
         if agent and agent["agent_status"] == "working" and not (deadline and time.time() >= deadline):
             paused_at = None
@@ -1028,14 +1056,141 @@ def cmd_wait(a):
             break
         paused_at = paused_at or time.time()
         if time.time() - paused_at > JOB_PATIENCE or (deadline and time.time() >= deadline):
-            print(f"{a.name}: paused with {jobs} background job(s) still running, so this may not be its final message. "
+            print(f"{name}: paused with {jobs} background job(s) still running, so this may not be its final message. "
                   "If it looks finished, Claude may have changed how its transcript records jobs")
+            end = "paused"
             break
         # Check back in slices, because a job can finish and wake the agent between looks.
         look = min(JOB_SLICE, left()) if deadline else JOB_SLICE
         if herdr("agent", "wait", m["pane"], "--until", "working", "--timeout", str(look), check=False):
             paused_at = None
+    if end:
+        pass
+    elif not agent:
+        end = "gone"
+    elif agent["agent_status"] == "working":
+        end = "timeout"
+    elif agent["agent_status"] == "blocked":
+        end = "held" if m.get("pending") else "blocked"
+    else:
+        end = "held" if m.get("pending") else "settled"
+    return m, alive, end
+
+
+def cmd_wait(a):
+    names = list(dict.fromkeys(a.names))
+    if len(names) == 1:
+        m, alive, end = await_pane(names[0], a.timeout)
+        report(names[0], m, alive)
+        ends = {names[0]: end}
+    else:
+        ends = wait_many(names, a.timeout)
+    if a.close:
+        close_settled(ends)
+
+
+def wait_many(names, timeout):
+    """Wait on several panes. Returns when all have settled, or early when one is blocked or held
+    at a startup prompt, since the user must not sit behind a slow sibling. Returns name: how it ended."""
+    reg = synced()[0]
+    for name in names:
+        member(reg, name)
+    deadline = time.time() + timeout / 1000 if timeout else None
+    ends, paused, flushed, held_jobs = {}, {}, set(), {}
+    while True:
+        reg, alive = synced()
+        running = []
+        for name in names:
+            if name in ends:
+                continue
+            m = reg[name]
+            agent = locate(name, m, alive)
+            if m.get("pending") and agent:
+                if not try_deliver(name):
+                    ends[name] = "held"
+                else:
+                    running.append(name)
+                continue
+            if not agent:
+                ends[name] = "gone"
+            elif agent["agent_status"] == "working":
+                paused.pop(name, None)
+                held_jobs.pop(name, None)
+                flushed.discard(name)
+                running.append(name)
+            elif agent["agent_status"] == "blocked":
+                ends[name] = "blocked"
+            else:
+                if name not in flushed:
+                    flushed.add(name)
+                    time.sleep(1)  # let the transcript flush, as a single wait does
+                jobs = pending_jobs(m.get("session"))
+                if not jobs:
+                    ends[name] = "settled"
+                elif time.time() - paused.setdefault(name, time.time()) > JOB_PATIENCE:
+                    ends[name] = "paused"
+                    held_jobs[name] = jobs
+                else:
+                    held_jobs[name] = jobs
+                    running.append(name)
+        stuck = [n for n in names if ends.get(n) in ("blocked", "held")]
+        if deadline and time.time() >= deadline:
+            for n in running:
+                ends[n] = "paused" if n in held_jobs else "timeout"
+            running = []
+        for n in [n for n, how in ends.items() if how == "paused" and n in held_jobs]:
+            print(f"{n}: paused with {held_jobs.pop(n)} background job(s) still running, so this may not be its final message. "
+                  "If it looks finished, Claude may have changed how its transcript records jobs")
+        if stuck or not running:
+            break
+        busy = [n for n in running if locate(n, reg[n], alive)["agent_status"] == "working"]
+        if busy:
+            herdr("agent", "wait", reg[busy[0]]["pane"], "--timeout", str(MULTI_SLICE), check=False)
+        else:
+            time.sleep(MULTI_SLICE / 1000)
+        time.sleep(0.2)
+    reg, alive = synced()
+    for name in names:
+        if name in ends:
+            report(name, reg[name], alive)
+            if ends[name] == "held":
+                print(f"{name}: held at a startup prompt, usually Claude's folder trust check. "
+                      f"Only the user should answer it, in pane {reg[name]['pane']}")
+            print()
+    if stuck:
+        rest = [n for n in names if n not in ends]
+        print(f"Returned early: {', '.join(stuck)} need(s) the user. "
+              + (f"Still running: {', '.join(rest)}. " if rest else "")
+              + f"Once answered, start `drover wait {' '.join(stuck + rest)}` again.")
+    return ends
+
+
+def close_settled(ends):
+    """Close the panes that settled normally, and say why the others stay open."""
+    why = {"blocked": "blocked, the user must answer it in its pane", "held": "held at a startup prompt, the user must answer it",
+           "timeout": "the wait timed out and it is still working", "paused": "paused with background jobs still running",
+           "gone": "gone, nothing to close. Run drover close to clear its entry"}
+    closing = [n for n, how in ends.items() if how == "settled"]
+    for name, how in ends.items():
+        if how != "settled":
+            print(f"{name}: left open, {why[how]}")
+    if closing:
+        close_panes(closing, False)
+
+
+def cmd_run(a):
+    """Spawn, wait, print the result, and close, so a primary needs one command."""
+    if os.environ.get("DROVER_CHILD"):
+        die("this pane is a drover subagent, it cannot spawn more")
+    a.brief = text_arg(a.brief)
+    with locked(SPAWN_LOCK):
+        spawn(a)
+    m, alive, end = await_pane(a.name, a.timeout)
     report(a.name, m, alive)
+    if a.keep:
+        print(f"{a.name}: left open (--keep)")
+    else:
+        close_settled({a.name: end})
 
 
 def cmd_result(a):
@@ -1097,12 +1252,17 @@ def cmd_close(a):
     names = list(reg) if a.all else a.names
     if not names:
         die("give names or --all")
+    close_panes(names, a.force)
+
+
+def close_panes(names, force):
+    reg, alive = synced()
     for name in names:
         member(reg, name)
     for name in names:
         m = reg[name]
         agent = locate(name, m, alive)
-        if agent and agent["agent_status"] in ("working", "blocked") and not a.force:
+        if agent and agent["agent_status"] in ("working", "blocked") and not force:
             print(f"{name}: still {agent['agent_status']}, skipped (use --force)")
             continue
         if not m.get("kept"):
@@ -1384,6 +1544,22 @@ def cmd_doctor(a):
     print(f"drover is ready, with {warned} warning(s)" if warned else "drover is ready")
 
 
+def spawn_options(s):
+    s.add_argument("--model")
+    s.add_argument("--effort", choices=EFFORTS, help="Claude's effort level for the pane")
+    s.add_argument("--preset", choices=sorted(PRESETS),
+                   help="scout is haiku with low effort, build is sonnet with medium effort. --model and --effort override it")
+    s.add_argument("--tools", choices=["lean"],
+                   help="lean starts the pane with only Bash, Read, Edit, Write, Glob, Grep, ToolSearch, WebFetch, WebSearch "
+                        "and no MCP servers, which makes it cheaper. Never the default. " + LEAN_LOSES)
+    s.add_argument("--mode", default="auto", help="auto (default), manual, acceptEdits, plan")
+    s.add_argument("--cwd")
+    s.add_argument("--tab", metavar="LABEL", help="run in a tab with this label, shared by agents using the same label")
+    s.add_argument("--label", metavar="TEXT", help="label for the pane, default the agent's name")
+    s.add_argument("--worktree", nargs="?", const="", metavar="BRANCH",
+                   help="run in a git worktree of the --cwd repo on BRANCH (default drover/<name>), reattaching if it exists")
+
+
 def main():
     if sys.argv[1:2] != ["doctor"] and (os.environ.get("HERDR_ENV") != "1" or not PRIMARY):
         die("not running inside herdr")
@@ -1392,14 +1568,15 @@ def main():
     s = sub.add_parser("spawn")
     s.add_argument("name")
     s.add_argument("brief", help="task text, or - to read stdin")
-    s.add_argument("--model")
-    s.add_argument("--mode", default="auto", help="auto (default), manual, acceptEdits, plan")
-    s.add_argument("--cwd")
-    s.add_argument("--tab", metavar="LABEL", help="run in a tab with this label, shared by agents using the same label")
-    s.add_argument("--label", metavar="TEXT", help="label for the pane, default the agent's name")
-    s.add_argument("--worktree", nargs="?", const="", metavar="BRANCH",
-                   help="run in a git worktree of the --cwd repo on BRANCH (default drover/<name>), reattaching if it exists")
+    spawn_options(s)
     s.set_defaults(fn=cmd_spawn)
+    s = sub.add_parser("run", help="spawn, wait, print the result, then close the pane, in one command")
+    s.add_argument("name")
+    s.add_argument("brief", help="task text, or - to read stdin")
+    spawn_options(s)
+    s.add_argument("--timeout", type=int, help="milliseconds to wait, a pane still working then stays open")
+    s.add_argument("--keep", action="store_true", help="do not close the pane afterwards")
+    s.set_defaults(fn=cmd_run)
     s = sub.add_parser("send")
     s.add_argument("name")
     s.add_argument("text", help="message text, or - to read stdin")
@@ -1409,9 +1586,10 @@ def main():
     s.add_argument("names", nargs="*", help="subagents to wrap up, default all")
     s.add_argument("--force", action="store_true", help="discard any unsent text in a pane, then send")
     s.set_defaults(fn=cmd_wrapup)
-    s = sub.add_parser("wait")
-    s.add_argument("name")
+    s = sub.add_parser("wait", help="block until the named subagents settle, or one needs the user")
+    s.add_argument("names", nargs="+")
     s.add_argument("--timeout", type=int, help="milliseconds")
+    s.add_argument("--close", action="store_true", help="then close the panes that settled normally")
     s.set_defaults(fn=cmd_wait)
     s = sub.add_parser("result")
     s.add_argument("name")
