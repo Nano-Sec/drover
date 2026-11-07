@@ -37,6 +37,10 @@ if [ -e "$dest" ] && [ "$src" -ef "$dest" ]; then
   echo "$dest already points at this checkout, nothing to copy."
   exit 0
 fi
+if [ -L "$dest" ]; then
+  echo "$dest is a link to somewhere else, and copying would write through it. Remove the link first, nothing was changed." >&2
+  exit 1
+fi
 if [ -e "$dest/SKILL.md" ] && ! is_drover_skill "$dest"; then
   echo "$dest holds a different skill. Move it first, nothing was changed." >&2
   exit 1
