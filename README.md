@@ -2,8 +2,7 @@
 
 Run Claude Code subagents as real, visible sessions in [herdr](https://herdr.dev) panes, so you can watch each one work and type to it directly.
 
-<!-- Demo GIF goes here: ![drover demo](docs/demo.gif) -->
-*Demo GIF coming soon.*
+![drover running three agents in panes from one prompt](docs/demo.gif)
 
 ## What it is
 
