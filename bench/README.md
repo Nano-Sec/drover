@@ -60,3 +60,42 @@ Single runs on a trivial sample, kept only to size the budget. `pilot1.jsonl` ro
 | T1 lookup, C | 392,639 | $0.156 | 8 | 351,245 | 9,545 |
 | T4 parallel, B | 949,151 | $0.393 | 12 | 549,104 | about 39,100 |
 | T4 parallel, C | 549,862 | $0.244 | 10 | 456,646 | about 9,500 |
+
+## Part 2: drover panes vs native subagents (measured)
+
+Arms: A = native Agent tool subagent, B = drover pane with default flags, C = drover pane with trimmed flags
+(`--tools Bash,Read,Edit,Write,Glob,Grep,ToolSearch,WebFetch,WebSearch --strict-mcp-config`). Primary is an interactive
+sonnet session in auto mode in every arm. 5 tasks, **2 repeats per cell (30 runs)**, not the 3 planned: the run stopped at the
+budget (about 16.8M tokens counting cache reads, slightly past the 15M cap, because the last runs were already in flight).
+Raw rows: `results/part2.jsonl`, log `results/part2_run.log`, outputs `results/outputs/part2/`.
+Tokens include cache reads. With n=2 the ranges are just the two values, so only gaps far larger than the ranges are claimed.
+
+Median tokens [min-max] / median cost USD / quality (mean score, all runs):
+
+| task | A native | B drover default | C drover trimmed |
+|---|---|---|---|
+| t1 lookup | 296k [281-312] / 0.133 / 1.0 | 510k [508-512] / 0.197 / 1.0 | 392k [392-393] / 0.156 / 1.0 |
+| t2 review | 237k [221-253] / 0.134 / 1.0 | 473k [473-473] / 0.203 / 1.0 | 384k [384-384] / 0.163 / 1.0 |
+| t3 fix | 285k [285-286] / 0.145 / 1.0 | 472k [472-472] / 0.205 / 1.0 | 396k [384-408] / 0.173 / 1.0 |
+| t4 parallel x3 | 549k [528-571] / 0.271 / 1.0 | 839k [815-862] / 0.377 / 1.0 | 530k [501-558] / 0.233 / 1.0 |
+| t5 rule | 255k [254-256] / 0.162 / 1.0 | 475k [474-477] / 0.213 / 1.0 | 395k [388-401] / 0.176 / 1.0 |
+
+Primary vs subagent tokens (medians per cell, summed share): primary is 57% of tokens in A, 67% in B, 88% in C. In C the
+subagent pane costs only about 32k to 98k tokens, but the primary still costs 350k+ on single-task runs (8 turns of a roughly
+39k-token interactive prompt) against about 160k in A.
+
+Checks: every run used only claude-sonnet-5-5; every run finished; A always used the Agent tool (n_native 1, or 3 on T4) and
+no panes; B and C always used drover panes (1, or 3 on T4) and no native agents; T5 subagents saw the rule in all 6 runs.
+Quality was 1.0 in all 30 runs, so quality does not separate the arms (the tasks are easy ceiling tasks).
+
+Conclusions:
+- Native subagents were cheaper than default drover panes on every task, by roughly 1.4x to 2x in tokens and 1.4x to 1.6x in
+  cost. The gaps exceed the spread. Wall time was also shorter (14 to 24 s vs 28 to 43 s).
+- Trimmed flags recover part of the gap: C is below B on every task. C is still above A on the four single-pane-or-small tasks
+  (about 1.3x to 1.6x tokens, 1.1x to 1.2x cost). On T4 (3 parallel subagents) C is about equal to A in tokens (530k vs 549k)
+  and below it in cost (0.233 vs 0.271); with n=2 and overlapping ranges this is a tie, not a win.
+- No quality difference was measurable. Drover's benefit here is visibility and user control, not token savings.
+
+Limits: 2 repeats; easy tasks; 3 runs in parallel shared rate limits and cache, which may affect wall time; auto-mode
+classifier calls may be missing from transcripts (unchecked); a drover capability test of Arm C on harder work was not done;
+one sonnet native subagent first prompt was about 28k tokens (single sample type, not the 3.5k quoted for small Haiku ones).

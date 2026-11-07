@@ -1,0 +1,9 @@
+[
+  {"line": 7, "problem": "The file is opened in write mode, which truncates it and makes json.load fail, instead of opening it for reading."},
+  {"line": 14, "problem": "The loop stops at len(items) - 1, so the last item is left out of the total."},
+  {"line": 19, "problem": "The mutable default argument tags=[] is shared across calls, so tags accumulate instead of starting from an empty list each time."},
+  {"line": 29, "problem": "The comparison uses > instead of >=, so an item with exactly qty in stock is wrongly reported as unable to fulfil."},
+  {"line": 34, "problem": "The percent is divided by 10 instead of 100, so the discount is ten times too large."},
+  {"line": 39, "problem": "The comparison is inverted (> instead of <), returning items with stock above the reorder level rather than below it."},
+  {"line": 45, "problem": "Using 'or 1' turns a quantity of 0 into 1, so a cancelled order does not stay 0."}
+]

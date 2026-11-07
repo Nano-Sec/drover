@@ -1,0 +1,34 @@
+10:54:01 t5a1x0 finished score=1.0 wall=20.4 tok=255951 cost=0.18968 panes=0 native=1 spent=4055951 left=27
+10:54:35 t4c1x1 finished score=1.0 wall=46.7 tok=558017 cost=0.23881 panes=3 native=0 spent=4613968 left=26
+10:54:35 t3c1x2 finished score=1.0 wall=39.8 tok=408487 cost=0.18044 panes=1 native=0 spent=5022455 left=25
+10:54:51 t5c1x3 finished score=1.0 wall=34.9 tok=400849 cost=0.17897 panes=1 native=0 spent=5423304 left=24
+10:55:18 t2c1x5 finished score=1.0 wall=28.5 tok=383806 cost=0.16261 panes=1 native=0 spent=5807110 left=23
+10:55:28 t5b1x4 finished score=1.0 wall=38.5 tok=473743 cost=0.21205 panes=1 native=0 spent=6280853 left=22
+10:55:32 t1b1x6 finished score=1 wall=29.2 tok=507940 cost=0.19343 panes=1 native=0 spent=6788793 left=21
+10:55:51 t2a1x7 finished score=1.0 wall=17.3 tok=253389 cost=0.13934 panes=0 native=1 spent=7042182 left=20
+10:56:11 t2b1x8 finished score=1.0 wall=28.1 tok=472883 cost=0.20298 panes=1 native=0 spent=7515065 left=19
+10:56:17 t1c1x9 finished score=1 wall=32.0 tok=392563 cost=0.15602 panes=1 native=0 spent=7907628 left=18
+10:56:28 t1a1x10 finished score=1 wall=22.9 tok=312307 cost=0.13661 panes=0 native=1 spent=8219935 left=17
+10:56:52 t3a1x12 finished score=1.0 wall=20.0 tok=285075 cost=0.14439 panes=0 native=1 spent=8505010 left=16
+10:56:58 t3b1x11 finished score=1.0 wall=31.7 tok=472427 cost=0.20479 panes=1 native=0 spent=8977437 left=15
+10:57:27 t4b1x13 finished score=1.0 wall=43.4 tok=815058 cost=0.36935 panes=3 native=0 spent=9792495 left=14
+10:57:31 t4a1x14 finished score=1.0 wall=23.7 tok=527640 cost=0.2664 panes=0 native=3 spent=10320135 left=13
+10:57:54 t4c2x15 finished score=1.0 wall=39.9 tok=501027 cost=0.22653 panes=3 native=0 spent=10821162 left=12
+10:58:00 t1a2x16 finished score=1 wall=17.7 tok=280663 cost=0.1295 panes=0 native=1 spent=11101825 left=11
+10:58:20 t5b2x17 finished score=1.0 wall=34.5 tok=476668 cost=0.21428 panes=1 native=0 spent=11578493 left=10
+10:58:31 t5a2x19 finished score=1.0 wall=16.5 tok=253888 cost=0.13524 panes=0 native=1 spent=11832381 left=9
+10:58:41 t3b2x18 finished score=1.0 wall=31.2 tok=472042 cost=0.2051 panes=1 native=0 spent=12304423 left=8
+10:58:59 t4a2x20 finished score=1.0 wall=24.2 tok=570899 cost=0.27571 panes=0 native=3 spent=12875322 left=7
+10:59:18 t3c2x21 finished score=1.0 wall=31.2 tok=383861 cost=0.1663 panes=1 native=0 spent=13259183 left=6
+10:59:28 t5c2x22 finished score=1.0 wall=32.0 tok=388251 cost=0.17214 panes=1 native=0 spent=13647434 left=5
+10:59:56 t4b2x23 finished score=1.0 wall=42.5 tok=862036 cost=0.38456 panes=3 native=0 spent=14509470 left=4
+11:00:03 t2c2x24 finished score=1.0 wall=29.5 tok=384279 cost=0.16307 panes=1 native=0 spent=14893749 left=3
+11:00:11 t1c2x25 finished score=1 wall=29.8 tok=391517 cost=0.15589 panes=1 native=0 spent=15285266 left=2
+11:00:39 t2b2x26 finished score=1.0 wall=28.1 tok=472959 cost=0.2028 panes=1 native=0 spent=15758225 left=1
+11:00:46 t1b2x27 finished score=1 wall=30.0 tok=512284 cost=0.20091 panes=1 native=0 spent=16270509 left=0
+BUDGET REACHED, no new runs
+11:00:48 t3a2x28 finished score=1.0 wall=22.9 tok=285501 cost=0.14533 panes=0 native=1 spent=16556010 left=0
+BUDGET REACHED, no new runs
+11:01:07 t2a2x29 finished score=1.0 wall=14.2 tok=220743 cost=0.12931 panes=0 native=1 spent=16776753 left=0
+BUDGET REACHED, no new runs
+ALL DONE

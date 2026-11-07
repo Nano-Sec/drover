@@ -1,0 +1,9 @@
+[
+  {"line": 7, "problem": "load_items opens the file in write mode ('w') instead of read mode, which truncates the file and makes json.load fail."},
+  {"line": 14, "problem": "stock_value loops over range(len(items) - 1), so the last item is excluded from the total."},
+  {"line": 19, "problem": "tag_item uses a mutable default argument tags=[], so the list is shared across calls instead of starting empty each time."},
+  {"line": 29, "problem": "can_fulfil uses > instead of >=, so an item with stock exactly equal to qty is wrongly reported as not fulfillable."},
+  {"line": 34, "problem": "sale_price divides percent by 10 instead of 100, so the discount is ten times too large."},
+  {"line": 39, "problem": "needs_reorder uses > instead of <, returning items whose stock is above the reorder level rather than below it."},
+  {"line": 45, "problem": "order_quantity uses 'or 1', so a quantity of 0 (cancelled) is turned into 1 instead of staying 0."}
+]
