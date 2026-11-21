@@ -68,8 +68,9 @@ EOF
 echo "       $dest/drover doctor"
 cat <<'EOF'
 
-Optional: for a more reliable automatic trigger, add this line to your CLAUDE.md
-yourself. This script did not change that file.
+Claude keeps using built-in subagents by default. Optional: for a firmer rule on
+when to use drover instead, add this line to your CLAUDE.md yourself. This script
+did not change that file.
 
-  When I ask for subagents or parallel agents and HERDR_ENV=1, use the drover skill so they run in visible herdr panes instead of the built-in Agent tool. This does not apply inside a drover pane (DROVER_CHILD=1).
+  When I ask for panes or visible agents, or want to watch or message an agent, and HERDR_ENV=1, use the drover skill instead of the built-in Agent tool. This does not apply inside a drover pane (DROVER_CHILD=1).
 EOF
