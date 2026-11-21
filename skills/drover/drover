@@ -865,6 +865,8 @@ def spawn(a):
         entry["effort"] = effort
     if a.tools:
         entry["tools"] = a.tools
+    if a.keep:
+        entry["pinned"] = True
     if wt:
         entry["worktree"] = wt
         brief += WORKTREE_NOTE.format(**wt) + (REATTACH_NOTE if reattached else "")
@@ -1174,8 +1176,18 @@ def close_settled(ends):
     for name, how in ends.items():
         if how != "settled":
             print(f"{name}: left open, {why[how]}")
+    closing = unpinned(closing)
     if closing:
         close_panes(closing, False)
+
+
+def unpinned(names):
+    """The names that are not pinned, saying so for each pinned one left out."""
+    reg = load()
+    for name in names:
+        if reg.get(name, {}).get("pinned"):
+            print(f"{name}: left open (pinned)")
+    return [n for n in names if not reg.get(n, {}).get("pinned")]
 
 
 def cmd_run(a):
@@ -1209,7 +1221,8 @@ def cmd_status(a):
         agent = locate(name, m, alive)
         state = agent["agent_status"] if agent else "kept" if m.get("kept") else "gone"
         w = m.get("worktree")
-        print(f"{name:<20} {state:<9} {m['pane']:<10} {m['cwd']}" + (f"  [{w['branch']}]" if w else ""))
+        print(f"{name:<20} {state:<9} {m['pane']:<10} {m['cwd']}" + (f"  [{w['branch']}]" if w else "")
+              + ("  pinned" if m.get("pinned") else ""))
 
 
 def cmd_rename(a):
@@ -1247,11 +1260,29 @@ def forget(name):
         reg.pop(name, None)
 
 
+def cmd_keep(a):
+    reg, alive = synced()
+    for name in a.names:
+        if not locate(name, member(reg, name), alive):
+            die(f"{name} is gone, there is no pane to pin")
+    with editing() as latest:
+        for name in a.names:
+            if name in latest:
+                if a.off:
+                    latest[name].pop("pinned", None)
+                else:
+                    latest[name]["pinned"] = True
+    for name in a.names:
+        print(f"{name}: " + ("unpinned" if a.off else "pinned, it stays open until drover close " + name))
+
+
 def cmd_close(a):
     reg, alive = synced()
     names = list(reg) if a.all else a.names
     if not names:
         die("give names or --all")
+    if a.all:
+        names = unpinned(names)
     close_panes(names, a.force)
 
 
@@ -1364,6 +1395,8 @@ def cmd_resume(a):
         print(f"{name:<20} {state:<8} {m['pane']:<10} {m['cwd']}")
         if m.get("label"):
             print(f"  label: {m['label']}")
+        if m.get("pinned"):
+            print("  pinned: wait --close and close --all leave it open")
         if held:
             print("  brief not delivered: held at a startup prompt that the user must answer")
         w = m.get("worktree")
@@ -1556,6 +1589,7 @@ def spawn_options(s):
     s.add_argument("--cwd")
     s.add_argument("--tab", metavar="LABEL", help="run in a tab with this label, shared by agents using the same label")
     s.add_argument("--label", metavar="TEXT", help="label for the pane, default the agent's name")
+    s.add_argument("--keep", action="store_true", help="pin the pane, so it stays open until closed by name")
     s.add_argument("--worktree", nargs="?", const="", metavar="BRANCH",
                    help="run in a git worktree of the --cwd repo on BRANCH (default drover/<name>), reattaching if it exists")
 
@@ -1575,7 +1609,6 @@ def main():
     s.add_argument("brief", help="task text, or - to read stdin")
     spawn_options(s)
     s.add_argument("--timeout", type=int, help="milliseconds to wait, a pane still working then stays open")
-    s.add_argument("--keep", action="store_true", help="do not close the pane afterwards")
     s.set_defaults(fn=cmd_run)
     s = sub.add_parser("send")
     s.add_argument("name")
@@ -1601,6 +1634,10 @@ def main():
     s.add_argument("label", nargs="?", help="new label for the tab holding this subagent")
     s.add_argument("--pane", metavar="LABEL", help="label this subagent's pane instead, which also works in the primary tab")
     s.set_defaults(fn=cmd_rename)
+    s = sub.add_parser("keep", help="pin panes so wait --close, run, and close --all leave them open")
+    s.add_argument("names", nargs="+")
+    s.add_argument("--off", action="store_true", help="unpin instead")
+    s.set_defaults(fn=cmd_keep)
     s = sub.add_parser("close")
     s.add_argument("names", nargs="*")
     s.add_argument("--all", action="store_true")

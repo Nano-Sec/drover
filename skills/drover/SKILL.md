@@ -12,7 +12,7 @@ Run everything through the helper:
 ```bash
 H="${CLAUDE_SKILL_DIR}/drover"
 $H run <name> "<brief>" [spawn options] [--keep] [--timeout ms]  # spawn, wait, print the result, close: one pane, one command
-$H spawn <name> "<brief>" [--model sonnet] [--effort low|medium|high|xhigh|max] [--preset scout|build] [--tools lean] [--mode manual] [--cwd <path>] [--tab "<label>"] [--label "<text>"] [--worktree [branch]]
+$H spawn <name> "<brief>" [--model sonnet] [--effort low|medium|high|xhigh|max] [--preset scout|build] [--tools lean] [--mode manual] [--cwd <path>] [--tab "<label>"] [--label "<text>"] [--worktree [branch]] [--keep]
 $H send <name> "<message>"     # steer a subagent, works mid-task
 $H wrapup [names...] [--force] # ask subagents to commit and write a handoff, default all
 $H wait <name> [name...] [--close] # blocks until all settle, or one is blocked, then prints each result or prompt
@@ -20,7 +20,8 @@ $H result <name>               # same output, without waiting
 $H status                      # window size, subagents per tab, and each subagent's state
 $H rename <name> "<label>"     # rename the tab holding that subagent, refused in the primary tab
 $H rename <name> --pane "<label>" # relabel its pane, which also works in the primary tab
-$H close <name> | --all        # skips working or blocked panes unless --force, never deletes unmerged work
+$H keep <name> [name...] [--off] # pin panes so wait --close, run, and close --all leave them open
+$H close <name> | --all        # skips working, blocked, or pinned (--all only) panes unless --force, never deletes unmerged work
 $H resume [--from <pane-id>]   # after a restart: reconcile state and list the waits to start
 $H doctor                      # check the setup and say how to fix what fails, works outside herdr too
 ```
@@ -36,7 +37,7 @@ Pass `-` as the brief or message to read it from stdin, which is best for multi-
 3. **One pane:** a single Bash call with `run_in_background: true` running `$H run <name> "<brief>"`. It spawns, waits, prints the result, and closes the pane. **Several panes:** spawn each (they take turns on a lock), then one background call `$H wait a b c --close`. Then end your turn: you are woken when it finishes, so never poll, never run `wait` in the foreground, and never loop on `status`. If a pane is blocked, `wait` returns early with its prompt and the names still running.
 4. **Relay.** The output already contains the final message. Summarize it for the user, and do not read the full transcript or pane unless something looks wrong.
 5. **Steer** when the user asks, with `$H send`. If the subagent had settled, start a new background `wait`. If a wait is still running, leave it. `wait` tracks state, not individual prompts, so after several sends check the message answers everything. An idle pane with background jobs still running counts as paused, so `wait` keeps holding, for up to 30 minutes per pause.
-6. **Closing** is built into `run` and `wait --close`, because idle panes get costlier to resume once the prompt cache expires. Pass `--keep` to `run`, or leave off `--close`, if the user asked to keep a pane or has been talking to it. Only panes that settled normally are closed: blocked, held, timed out, and paused ones stay open and are reported. Transcripts survive closing.
+6. **Closing** is built into `run` and `wait --close`, because idle panes get costlier to resume once the prompt cache expires. If the user wants panes to persist for demos or reports, pass `--keep` to `run` or `spawn`, or run `$H keep <name>` later: pinned panes are skipped by `wait --close`, `run`, and `close --all` (`status` shows `pinned`), and only an explicit `close <name>` closes one. Leave off `--close` if the user has been talking to a pane. Only panes that settled normally are closed: blocked, held, timed out, and paused ones stay open and are reported. Transcripts survive closing.
 
 ## Stopping for now
 
