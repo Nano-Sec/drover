@@ -20,6 +20,7 @@ REG_LOCK = ".registry.lock"  # held for each read-change-write of a registry
 SPAWN_LOCK = ".spawn.lock"  # held for a whole spawn, and always taken before REG_LOCK
 WORKTREES = os.path.join(STATE_DIR, "worktrees")
 HANDOFFS = os.path.join(STATE_DIR, "handoffs")
+RESULTS = os.path.join(STATE_DIR, "results")
 PRIMARY = os.environ.get("HERDR_PANE_ID", "")
 
 
@@ -1205,9 +1206,43 @@ def cmd_run(a):
         close_settled({a.name: end})
 
 
+def saved_result(name):
+    """Print the report saved when a pane was closed. False if there is none."""
+    path = os.path.join(RESULTS, name + ".md")
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError:
+        return False
+    print(f"{name}: closed, showing the report saved at {path}\n--- last message ---\n{text}")
+    return True
+
+
 def cmd_result(a):
     reg, alive = synced()
+    if a.name not in reg and saved_result(a.name):
+        return
     report(a.name, member(reg, a.name), alive)
+
+
+def save_result(name, session):
+    """Save the pane's last message to results/<name>.md, moving an older one to .prev. Returns the path or None."""
+    msg, _ = last_message(session)
+    if not msg:
+        return None
+    path = os.path.join(RESULTS, name + ".md")
+    tmp = f"{path}.{os.getpid()}.tmp"
+    try:
+        os.makedirs(RESULTS, exist_ok=True)
+        with open(tmp, "w") as f:
+            f.write(msg if msg.endswith("\n") else msg + "\n")
+        if os.path.exists(path):
+            os.replace(path, path + ".prev")
+        os.replace(tmp, path)
+    except OSError as e:
+        warn(f"could not save the report of {name}: {e}")
+        return None
+    return path
 
 
 def cmd_status(a):
@@ -1281,8 +1316,8 @@ def cmd_close(a):
     names = list(reg) if a.all else a.names
     if not names:
         die("give names or --all")
-    if a.all:
-        names = unpinned(names)
+    if a.all:  # a pinned entry whose pane is gone has nothing to keep open, so it is cleared
+        names = unpinned([n for n in names if locate(n, reg[n], alive)]) + [n for n in names if not locate(n, reg[n], alive)]
     close_panes(names, a.force)
 
 
@@ -1296,12 +1331,15 @@ def close_panes(names, force):
         if agent and agent["agent_status"] in ("working", "blocked") and not force:
             print(f"{name}: still {agent['agent_status']}, skipped (use --force)")
             continue
+        saved = None
         if not m.get("kept"):
+            saved = save_result(name, m.get("session"))
             herdr("pane", "close", m["pane"], check=False)
+        note = f", report saved to {saved}" if saved else ""
         w = m.get("worktree")
         if not w:
             forget(name)
-            print(f"{name}: closed")
+            print(f"{name}: closed{note}")
             continue
         if agent:
             time.sleep(1)  # let the agent stop writing before judging the worktree
@@ -1313,11 +1351,11 @@ def close_panes(names, force):
             with editing() as latest:
                 if name in latest:
                     latest[name]["kept"] = True
-            print(f"{name}: pane closed, work kept ({', '.join(why)})\n  {worktree_line(w)}\n"
+            print(f"{name}: pane closed, work kept ({', '.join(why)}){note}\n  {worktree_line(w)}\n"
                   f"  Once it is merged or dealt with, run drover close {name} again to clean up.")
         else:
             forget(name)
-            print(f"{name}: closed, worktree removed")
+            print(f"{name}: closed, worktree removed{note}")
 
 
 def describe(m, agent):

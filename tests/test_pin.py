@@ -68,6 +68,13 @@ class Pin(DroverCase):
         self.assertIn("b: closed", out)
         self.assertEqual(list(self.reg()), ["a"])
 
+    def test_close_all_clears_a_pinned_entry_whose_pane_is_gone(self):
+        self.spawn("a", "--keep")
+        self.close_pane_outside("a")
+        out = self.ok("close", "--all")
+        self.assertNotIn("left open", out)
+        self.assertEqual(self.reg(), {})
+
     def test_explicit_close_still_closes_a_pinned_pane(self):
         self.spawn("a", "--keep")
         pane = self.entry("a")["pane"]
