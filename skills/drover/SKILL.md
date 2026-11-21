@@ -16,7 +16,7 @@ $H spawn <name> "<brief>" [--model sonnet] [--effort low|medium|high|xhigh|max] 
 $H send <name> "<message>"     # steer a subagent, works mid-task
 $H wrapup [names...] [--force] # ask subagents to commit and write a handoff, default all
 $H wait <name> [name...] [--close] # blocks until all settle, or one is blocked, then prints each result or prompt
-$H result <name>               # same output, without waiting
+$H result <name>               # same output, without waiting. After a close, prints the saved report
 $H status                      # window size, subagents per tab, and each subagent's state
 $H rename <name> "<label>"     # rename the tab holding that subagent, refused in the primary tab
 $H rename <name> --pane "<label>" # relabel its pane, which also works in the primary tab
@@ -36,7 +36,7 @@ Pass `-` as the brief or message to read it from stdin, which is best for multi-
 3. **One pane:** a single Bash call with `run_in_background: true` running `$H run <name> "<brief>"`. It spawns, waits, prints the result, and closes the pane. **Several panes:** spawn each (they take turns on a lock), then one background call `$H wait a b c --close`. Then end your turn: you are woken when it finishes, so never poll, never run `wait` in the foreground, and never loop on `status`. If a pane is blocked, `wait` returns early with its prompt and the names still running.
 4. **Relay.** The output already contains the final message. Summarize it for the user, and do not read the full transcript or pane unless something looks wrong.
 5. **Steer** when the user asks, with `$H send`. If the subagent had settled, start a new background `wait`. If a wait is still running, leave it. `wait` tracks state, not individual prompts, so after several sends check the message answers everything. An idle pane with background jobs still running counts as paused, so `wait` keeps holding, for up to 30 minutes per pause.
-6. **Closing** is built into `run` and `wait --close`, because idle panes get costlier to resume once the prompt cache expires. Pass `--keep` to `run`, or leave off `--close`, if the user asked to keep a pane or has been talking to it. Only panes that settled normally are closed: blocked, held, timed out, and paused ones stay open and are reported. Transcripts survive closing.
+6. **Closing** is built into `run` and `wait --close`, because idle panes get costlier to resume once the prompt cache expires. Pass `--keep` to `run`, or leave off `--close`, if the user asked to keep a pane or has been talking to it. Only panes that settled normally are closed: blocked, held, timed out, and paused ones stay open and are reported. Closing saves each pane's last message to `~/.claude/drover/results/<name>.md` (older one to `.prev`), and `$H result <name>` still prints it.
 
 ## Stopping for now
 

@@ -113,12 +113,12 @@ Claude normally runs these for you, so you rarely need to type them. They do all
 | `drover spawn <name> "<brief>"` | Start a subagent. Options: `--model`, `--effort low\|medium\|high\|xhigh\|max`, `--preset scout\|build`, `--tools lean`, `--mode`, `--cwd`, `--tab "<label>"`, `--label "<text>"`, `--worktree [branch]`. |
 | `drover send <name> "<message>"` | Send a message to a subagent, even mid-task. Refused while the pane waits on a prompt, even with `--force`. Also refused if the pane holds unsent text or its input box cannot be found, unless you pass `--force`. |
 | `drover wait <name> [name...]` | Block until the panes settle, then print each final message or the prompt it is stuck on. With several names it returns early if one is blocked, naming the panes still running. `--close` closes the ones that settled normally. |
-| `drover result <name>` | Print the same output without waiting. |
+| `drover result <name>` | Print the same output without waiting. After the pane is closed, prints the report saved at close. |
 | `drover status` | Show the window size, how many subagents fit per tab, and each subagent's state. |
 | `drover rename <name> "<label>"` | Rename the tab holding a subagent. Refused in the primary's tab. |
 | `drover rename <name> --pane "<label>"` | Relabel a subagent's pane, in any tab. |
 | `drover wrapup [names...]` | Ask subagents to commit and write a handoff. Defaults to all of them. |
-| `drover close <name>` or `--all` | Close panes. Skips working or blocked panes unless you pass `--force`. |
+| `drover close <name>` or `--all` | Close panes. Skips working or blocked panes unless you pass `--force`. Saves each pane's last message to `results/<name>.md` in the state folder first (an older one moves to `.prev`). |
 | `drover resume [--from <pane-id>]` | After a restart, reconcile state and list the waits to start again. |
 | `drover doctor` | Check your setup. |
 
