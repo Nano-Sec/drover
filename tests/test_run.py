@@ -71,6 +71,7 @@ class Run(DroverCase):
         repo = self.repo()
         self.finish_next()
         self.ok("run", "a", "Do the task.", "--worktree", "--cwd", repo, "--keep")
+        self.ok("keep", "--off", "a")  # --keep pins the pane, which wait --close would skip
         self.commit_file(self.wt_path(repo, "a"))
         out = self.ok("wait", "a", "--close")
         self.assertIn("a: pane closed, work kept", out)

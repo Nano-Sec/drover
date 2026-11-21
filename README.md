@@ -109,8 +109,8 @@ Claude normally runs these for you, so you rarely need to type them. They do all
 
 | Command | What it does |
 | --- | --- |
-| `drover run <name> "<brief>"` | Spawn, wait, print the result, and close the pane, in one command. Takes every spawn option, plus `--keep` to skip the close and `--timeout`. A blocked, held, or timed out pane stays open and is reported. |
-| `drover spawn <name> "<brief>"` | Start a subagent. Options: `--model`, `--effort low\|medium\|high\|xhigh\|max`, `--preset scout\|build`, `--tools lean`, `--mode`, `--cwd`, `--tab "<label>"`, `--label "<text>"`, `--worktree [branch]`. |
+| `drover run <name> "<brief>"` | Spawn, wait, print the result, and close the pane, in one command. Takes every spawn option, plus `--keep` to pin the pane so it stays open, and `--timeout`. A blocked, held, or timed out pane stays open and is reported. |
+| `drover spawn <name> "<brief>"` | Start a subagent. Options: `--model`, `--effort low\|medium\|high\|xhigh\|max`, `--preset scout\|build`, `--tools lean`, `--mode`, `--cwd`, `--tab "<label>"`, `--label "<text>"`, `--worktree [branch]`, `--keep` (pin the pane, see `drover keep`). |
 | `drover send <name> "<message>"` | Send a message to a subagent, even mid-task. Refused while the pane waits on a prompt, even with `--force`. Also refused if the pane holds unsent text or its input box cannot be found, unless you pass `--force`. |
 | `drover wait <name> [name...]` | Block until the panes settle, then print each final message or the prompt it is stuck on. With several names it returns early if one is blocked, naming the panes still running. `--close` closes the ones that settled normally. |
 | `drover result <name>` | Print the same output without waiting. |
@@ -118,7 +118,8 @@ Claude normally runs these for you, so you rarely need to type them. They do all
 | `drover rename <name> "<label>"` | Rename the tab holding a subagent. Refused in the primary's tab. |
 | `drover rename <name> --pane "<label>"` | Relabel a subagent's pane, in any tab. |
 | `drover wrapup [names...]` | Ask subagents to commit and write a handoff. Defaults to all of them. |
-| `drover close <name>` or `--all` | Close panes. Skips working or blocked panes unless you pass `--force`. |
+| `drover keep <name> [name...]` | Pin panes so `wait --close`, `run`, and `close --all` leave them open, for demos or reading reports. `--off` unpins. `status` shows `pinned`. |
+| `drover close <name>` or `--all` | Close panes. Skips working or blocked panes unless you pass `--force`. `--all` also skips pinned panes, but `close <name>` closes a pinned pane. |
 | `drover resume [--from <pane-id>]` | After a restart, reconcile state and list the waits to start again. |
 | `drover doctor` | Check your setup. |
 
