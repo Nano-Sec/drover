@@ -118,3 +118,15 @@ Findings:
 - Cost did not follow tokens on t1: tokens fell 8 percent, cost stayed at $0.196, since most cost is cache writes of the primary's startup and the pane's own session. t4 fell 20 percent in tokens and 8 percent in cost.
 - Quality was 1.0 in both runs, so it separates nothing.
 - Limits: one run per task, so the differences on t1 (7 against 8 turns, +4 s wall) are within what one run can show. Wall time is not better. This does not show drover matching native subagents.
+
+## Part 4: compact reports and output rules (measured, 2026-11-22)
+
+Arm B, task t4 only, 1 run, sonnet primary, helper and SKILL.md from main after the 0.3.0 changes: `wait` and `run` cut reports to 1,500 characters, every brief asks for short command output and a summary first, and SKILL.md has a "Keep the primary small" block. Raw row: `results/part4.jsonl`. The run was started by calling `run_one` directly, because the `run_part2.py` entry point stopped with an unexplained FileNotFoundError before starting Claude.
+
+| task | Part 3 turns | Part 4 turns | Part 3 primary tokens | Part 4 primary tokens | Part 3 total | Part 4 total | Part 3 cost | Part 4 cost | Score | Wall |
+|---|---|---|---|---|---|---|---|---|---|---|
+| t4 parallel x3 | 7 | 8 | 311k | 347k | 671k | 733k | $0.345 | $0.389 | 1.0 / 1.0 | 42.3 s / 38.5 s |
+
+Findings: no gain on this task, and the difference is within what one run can show. t4's pane reports are short, so nothing is cut, and each pane takes 3 or 4 turns, so short-output rules have little to act on. The longer SKILL.md adds to the primary's prompt. These changes target long sessions with long reports and noisy test runs, which this benchmark does not contain. Do not claim savings from them. Pane first prompts were 37.8k, against 39.1k in Part 3.
+
+Also measured on 2026-11-22, Haiku, first prompt of an interactive pane: default 39.2k, `--strict-mcp-config` 36.9k, lean 11.5k. Dropping only MCP servers saves too little to offer as a flag.
