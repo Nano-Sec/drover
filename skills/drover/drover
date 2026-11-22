@@ -41,6 +41,9 @@ WORKTREE_NOTE = """
 
 You are working in your own git worktree at {path}, on branch {branch}, so parallel subagents cannot collide. Stay in it and commit your work to that branch. Do not merge or push unless told to. Files that git ignores in the main repo, such as .env, are not here."""
 
+OUTPUT_NOTE = ("\n\nKeep command output short: tail long logs and test runs, and read files in parts. Open your final message "
+               "with a 2 to 3 line summary, since the primary sees only its first 1,500 characters.")
+
 REATTACH_NOTE = " This worktree or branch already holds earlier work, so check git status and git log before you start."
 
 HANDOFF_NOTE = "This continues earlier work. Here is the handoff from the last session, also saved at {path}:\n\n{text}\n\n---\n\n"
@@ -55,6 +58,9 @@ LEAN_TOOLS = ["--tools", "Bash,Read,Edit,Write,Glob,Grep,ToolSearch,WebFetch,Web
 LEAN_LOSES = ("a lean pane cannot use Agent, Skill, AskUserQuestion, Artifact, Monitor, TaskStop, ScheduleWakeup, "
               "cron or worktree tools, or any MCP server. It keeps Bash, the file tools, web tools through ToolSearch, "
               "typed slash commands, and CLAUDE.md")
+NOMCP_TOOLS = ["--strict-mcp-config"]
+NOMCP_NOTE = "note: this pane has no MCP servers or connectors, but keeps every built-in tool and skill"
+REPORT_CHARS = 1500  # characters of a final message that wait and run print
 MULTI_SLICE = 5000  # milliseconds between looks when waiting on several panes
 
 MAX_PASTE = 20000  # characters of any one file pasted into a brief
@@ -760,7 +766,7 @@ def deliver(name, timeout_ms):
 def start_claude(name, pane, mode, model, effort=None, tools=None):
     native = ["--permission-mode", mode, "-n", name] + (["--model", model] if model else [])
     native += ["--effort", effort] if effort else []
-    native += LEAN_TOOLS if tools == "lean" else []
+    native += LEAN_TOOLS if tools == "lean" else NOMCP_TOOLS if tools == "nomcp" else []
     return herdr("agent", "start", name, "--kind", "claude", "--pane", pane,
                  "--timeout", "45000", "--", *native, check=False)
 
@@ -871,7 +877,7 @@ def spawn(a):
     if wt:
         entry["worktree"] = wt
         brief += WORKTREE_NOTE.format(**wt) + (REATTACH_NOTE if reattached else "")
-    text = BRIEF.format(name=a.name, brief=brief)
+    text = BRIEF.format(name=a.name, brief=brief + OUTPUT_NOTE)
     if not session:
         entry["pending"] = text  # drover wait delivers it once the prompt is answered
     with editing() as latest:
@@ -882,7 +888,9 @@ def spawn(a):
             mode = recheck_auto(a.name, session) or mode
     where = f"tab '{group}'" if group else "the primary tab"
     print(f"{a.name} started in {pane}, {where} ({mode}, {model or 'default model'}"
-          f"{', effort ' + effort if effort else ''}{', lean tools' if a.tools else ''}), session {session or 'pending'}")
+          f"{', effort ' + effort if effort else ''}{', ' + a.tools + ' tools' if a.tools else ''}), session {session or 'pending'}")
+    if a.tools == "nomcp":
+        print(NOMCP_NOTE)
     if wt:
         print(f"worktree {how}: {worktree_line(wt)}")
         if reattached:
@@ -998,7 +1006,27 @@ def screen_tail(pane, n):
     return "\n".join([l for l in (screen(pane, ansi=False) or "").splitlines() if l.strip()][-n:])
 
 
-def report(name, m, alive):
+def cut_message(msg, limit=REPORT_CHARS):
+    """The first limit characters of msg, cut at a line or word boundary near the limit."""
+    head = msg[:limit]
+    for sep in ("\n", " "):
+        i = head.rfind(sep)
+        if i >= limit * 0.6:
+            return head[:i].rstrip()
+    return head
+
+
+def print_final(name, msg, full):
+    """Print a final message, cut to REPORT_CHARS unless full, after saving it to results/<name>.md."""
+    path = save_result(name, msg=msg)
+    shown = msg if full else cut_message(msg)
+    print(f"--- final message ---\n{shown}")
+    if len(shown) < len(msg):
+        print(f"--- cut: showing {len(shown):,} of {len(msg):,} chars, full report: "
+              f"{path or 'not saved'} (drover result {name}, or --full) ---")
+
+
+def report(name, m, alive, full=False):
     agent = locate(name, m, alive)
     if m.get("worktree"):
         print(f"worktree: {worktree_line(m['worktree'])}")
@@ -1023,7 +1051,10 @@ def report(name, m, alive):
                   "which may be cut off. Transcript saving may be off, or its location or format "
                   "may have changed. Run drover doctor ---\n" + screen_tail(m["pane"], 30))
         else:
-            print(f"--- final message ---\n{msg or '(none yet)'}")
+            if msg:
+                print_final(name, msg, full)
+            else:
+                print("--- final message ---\n(none yet)")
 
 
 def await_pane(name, timeout):
@@ -1084,15 +1115,15 @@ def cmd_wait(a):
     names = list(dict.fromkeys(a.names))
     if len(names) == 1:
         m, alive, end = await_pane(names[0], a.timeout)
-        report(names[0], m, alive)
+        report(names[0], m, alive, a.full)
         ends = {names[0]: end}
     else:
-        ends = wait_many(names, a.timeout)
+        ends = wait_many(names, a.timeout, a.full)
     if a.close:
         close_settled(ends)
 
 
-def wait_many(names, timeout):
+def wait_many(names, timeout, full=False):
     """Wait on several panes. Returns when all have settled, or early when one is blocked or held
     at a startup prompt, since the user must not sit behind a slow sibling. Returns name: how it ended."""
     reg = synced()[0]
@@ -1155,7 +1186,7 @@ def wait_many(names, timeout):
     reg, alive = synced()
     for name in names:
         if name in ends:
-            report(name, reg[name], alive)
+            report(name, reg[name], alive, full)
             if ends[name] == "held":
                 print(f"{name}: held at a startup prompt, usually Claude's folder trust check. "
                       f"Only the user should answer it, in pane {reg[name]['pane']}")
@@ -1199,7 +1230,7 @@ def cmd_run(a):
     with locked(SPAWN_LOCK):
         spawn(a)
     m, alive, end = await_pane(a.name, a.timeout)
-    report(a.name, m, alive)
+    report(a.name, m, alive, a.full)
     if a.keep:
         print(f"{a.name}: left open (--keep)")
     else:
@@ -1222,20 +1253,29 @@ def cmd_result(a):
     reg, alive = synced()
     if a.name not in reg and saved_result(a.name):
         return
-    report(a.name, member(reg, a.name), alive)
+    report(a.name, member(reg, a.name), alive, True)
 
 
-def save_result(name, session):
-    """Save the pane's last message to results/<name>.md, moving an older one to .prev. Returns the path or None."""
-    msg, _ = last_message(session)
+def save_result(name, session=None, msg=None):
+    """Save the last message to results/<name>.md, moving an older one to .prev. Returns the path or None.
+    Leaves the file alone when it already holds the same text."""
+    if msg is None:
+        msg, _ = last_message(session)
     if not msg:
         return None
     path = os.path.join(RESULTS, name + ".md")
+    text = msg if msg.endswith("\n") else msg + "\n"
+    try:
+        with open(path) as f:
+            if f.read() == text:
+                return path
+    except OSError:
+        pass
     tmp = f"{path}.{os.getpid()}.tmp"
     try:
         os.makedirs(RESULTS, exist_ok=True)
         with open(tmp, "w") as f:
-            f.write(msg if msg.endswith("\n") else msg + "\n")
+            f.write(text)
         if os.path.exists(path):
             os.replace(path, path + ".prev")
         os.replace(tmp, path)
@@ -1620,9 +1660,10 @@ def spawn_options(s):
     s.add_argument("--effort", choices=EFFORTS, help="Claude's effort level for the pane")
     s.add_argument("--preset", choices=sorted(PRESETS),
                    help="scout is haiku with low effort, build is sonnet with medium effort. --model and --effort override it")
-    s.add_argument("--tools", choices=["lean"],
+    s.add_argument("--tools", choices=["lean", "nomcp"],
                    help="lean starts the pane with only Bash, Read, Edit, Write, Glob, Grep, ToolSearch, WebFetch, WebSearch "
-                        "and no MCP servers, which makes it cheaper. Never the default. " + LEAN_LOSES)
+                        "and no MCP servers, which makes it cheaper. Never the default. " + LEAN_LOSES
+                        + ". nomcp keeps every built-in tool and skill but loads no MCP servers")
     s.add_argument("--mode", default="auto", help="auto (default), manual, acceptEdits, plan")
     s.add_argument("--cwd")
     s.add_argument("--tab", metavar="LABEL", help="run in a tab with this label, shared by agents using the same label")
@@ -1647,6 +1688,7 @@ def main():
     s.add_argument("brief", help="task text, or - to read stdin")
     spawn_options(s)
     s.add_argument("--timeout", type=int, help="milliseconds to wait, a pane still working then stays open")
+    s.add_argument("--full", action="store_true", help="print the final message in full, not the first 1,500 characters")
     s.set_defaults(fn=cmd_run)
     s = sub.add_parser("send")
     s.add_argument("name")
@@ -1661,6 +1703,7 @@ def main():
     s.add_argument("names", nargs="+")
     s.add_argument("--timeout", type=int, help="milliseconds")
     s.add_argument("--close", action="store_true", help="then close the panes that settled normally")
+    s.add_argument("--full", action="store_true", help="print each final message in full, not the first 1,500 characters")
     s.set_defaults(fn=cmd_wait)
     s = sub.add_parser("result")
     s.add_argument("name")

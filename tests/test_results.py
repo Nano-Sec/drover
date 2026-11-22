@@ -72,6 +72,52 @@ class SavedResults(DroverCase):
         self.assertTrue(self.path().startswith(self.state_dir))
         self.assertTrue(os.path.exists(self.path()))
 
+    def settle(self, text, name="a", *args):
+        self.spawn(name, *args)
+        self.say(name, assistant_line(text))
+        self.set_status(name, "idle")
+
+    def test_wait_saves_the_report_while_the_pane_stays_open(self):
+        self.settle("OPEN REPORT", "a", "--keep")
+        self.ok("wait", "a")
+        self.assertIn("OPEN REPORT", self.read(self.path()))
+        self.assertIn("a", self.reg())
+
+    def test_close_does_not_rotate_an_unchanged_report(self):
+        self.settle("SAME TEXT")
+        self.ok("wait", "a")
+        self.ok("close", "a")
+        self.assertIn("SAME TEXT", self.read(self.path()))
+        self.assertFalse(os.path.exists(self.path() + ".prev"))
+
+    def test_long_report_is_cut_with_a_pointer(self):
+        text = "\n".join(f"line {i:03d} " + "x" * 40 for i in range(100))
+        self.settle(text)
+        out = self.ok("wait", "a")
+        self.assertIn("--- final message ---", out)
+        self.assertIn("line 000", out)
+        self.assertNotIn("line 099", out)
+        self.assertIn("--- cut: showing", out)
+        self.assertIn(self.path(), out)
+        self.assertEqual(self.read(self.path()), text + "\n")
+
+    def test_full_prints_everything_and_so_does_result(self):
+        text = "\n".join(f"line {i:03d} " + "x" * 40 for i in range(100))
+        self.settle(text)
+        self.assertIn("line 099", self.ok("wait", "a", "--full"))
+        self.assertNotIn("--- cut", self.ok("wait", "a", "--full"))
+        self.assertIn("line 099", self.ok("result", "a"))
+
+    def test_short_report_has_no_cut_line(self):
+        self.settle("SHORT")
+        self.assertNotIn("--- cut", self.ok("wait", "a"))
+
+    def test_long_report_without_newlines_is_cut(self):
+        self.spawn("b", "--keep")
+        self.say("b", assistant_line("y" * 3000))
+        self.set_status("b", "idle")
+        self.assertIn("--- cut", self.ok("wait", "b"))
+
 
 if __name__ == "__main__":
     unittest.main()

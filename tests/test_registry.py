@@ -52,7 +52,7 @@ class Spawn(DroverCase):
         self.spawn("alpha", brief="Audit the login flow.")
         brief = self.brief("alpha")
         self.assertIn("You are a subagent named alpha", brief)
-        self.assertTrue(brief.endswith("Task:\nAudit the login flow."), brief)
+        self.assertTrue("Task:\nAudit the login flow." in brief, brief)
 
     def test_brief_from_stdin(self):
         self.ok("spawn", "alpha", "-", stdin="line one\nline two\n")
