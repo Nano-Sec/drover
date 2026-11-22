@@ -112,6 +112,15 @@ class SavedResults(DroverCase):
         self.settle("SHORT")
         self.assertNotIn("--- cut", self.ok("wait", "a"))
 
+    def test_report_under_the_limit_is_printed_whole_even_with_late_line_breaks(self):
+        self.spawn("c", "--keep")
+        text = "x" * 1000 + "\n" + "TAIL" * 100  # 1,401 chars, a line break past 60% of the limit
+        self.say("c", assistant_line(text))
+        self.set_status("c", "idle")
+        out = self.ok("wait", "c")
+        self.assertIn("TAIL" * 100, out)
+        self.assertNotIn("--- cut", out)
+
     def test_long_report_without_newlines_is_cut(self):
         self.spawn("b", "--keep")
         self.say("b", assistant_line("y" * 3000))

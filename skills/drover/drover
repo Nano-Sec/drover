@@ -1008,6 +1008,8 @@ def screen_tail(pane, n):
 
 def cut_message(msg, limit=REPORT_CHARS):
     """The first limit characters of msg, cut at a line or word boundary near the limit."""
+    if len(msg) <= limit:
+        return msg
     head = msg[:limit]
     for sep in ("\n", " "):
         i = head.rfind(sep)
