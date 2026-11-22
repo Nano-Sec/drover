@@ -58,8 +58,6 @@ LEAN_TOOLS = ["--tools", "Bash,Read,Edit,Write,Glob,Grep,ToolSearch,WebFetch,Web
 LEAN_LOSES = ("a lean pane cannot use Agent, Skill, AskUserQuestion, Artifact, Monitor, TaskStop, ScheduleWakeup, "
               "cron or worktree tools, or any MCP server. It keeps Bash, the file tools, web tools through ToolSearch, "
               "typed slash commands, and CLAUDE.md")
-NOMCP_TOOLS = ["--strict-mcp-config"]
-NOMCP_NOTE = "note: this pane has no MCP servers or connectors, but keeps every built-in tool and skill"
 REPORT_CHARS = 1500  # characters of a final message that wait and run print
 MULTI_SLICE = 5000  # milliseconds between looks when waiting on several panes
 
@@ -766,7 +764,7 @@ def deliver(name, timeout_ms):
 def start_claude(name, pane, mode, model, effort=None, tools=None):
     native = ["--permission-mode", mode, "-n", name] + (["--model", model] if model else [])
     native += ["--effort", effort] if effort else []
-    native += LEAN_TOOLS if tools == "lean" else NOMCP_TOOLS if tools == "nomcp" else []
+    native += LEAN_TOOLS if tools == "lean" else []
     return herdr("agent", "start", name, "--kind", "claude", "--pane", pane,
                  "--timeout", "45000", "--", *native, check=False)
 
@@ -889,8 +887,6 @@ def spawn(a):
     where = f"tab '{group}'" if group else "the primary tab"
     print(f"{a.name} started in {pane}, {where} ({mode}, {model or 'default model'}"
           f"{', effort ' + effort if effort else ''}{', ' + a.tools + ' tools' if a.tools else ''}), session {session or 'pending'}")
-    if a.tools == "nomcp":
-        print(NOMCP_NOTE)
     if wt:
         print(f"worktree {how}: {worktree_line(wt)}")
         if reattached:
@@ -1662,10 +1658,9 @@ def spawn_options(s):
     s.add_argument("--effort", choices=EFFORTS, help="Claude's effort level for the pane")
     s.add_argument("--preset", choices=sorted(PRESETS),
                    help="scout is haiku with low effort, build is sonnet with medium effort. --model and --effort override it")
-    s.add_argument("--tools", choices=["lean", "nomcp"],
+    s.add_argument("--tools", choices=["lean"],
                    help="lean starts the pane with only Bash, Read, Edit, Write, Glob, Grep, ToolSearch, WebFetch, WebSearch "
-                        "and no MCP servers, which makes it cheaper. Never the default. " + LEAN_LOSES
-                        + ". nomcp keeps every built-in tool and skill but loads no MCP servers")
+                        "and no MCP servers, which makes it cheaper. Never the default. " + LEAN_LOSES)
     s.add_argument("--mode", default="auto", help="auto (default), manual, acceptEdits, plan")
     s.add_argument("--cwd")
     s.add_argument("--tab", metavar="LABEL", help="run in a tab with this label, shared by agents using the same label")

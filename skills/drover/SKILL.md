@@ -12,7 +12,7 @@ Run everything through the helper:
 ```bash
 H="${CLAUDE_SKILL_DIR}/drover"
 $H run <name> "<brief>" [spawn options] [--keep] [--timeout ms] [--full]  # spawn, wait, print the result, close: one pane, one command
-$H spawn <name> "<brief>" [--model sonnet] [--effort low|medium|high|xhigh|max] [--preset scout|build] [--tools lean|nomcp] [--mode manual] [--cwd <path>] [--tab "<label>"] [--label "<text>"] [--worktree [branch]] [--keep]
+$H spawn <name> "<brief>" [--model sonnet] [--effort low|medium|high|xhigh|max] [--preset scout|build] [--tools lean] [--mode manual] [--cwd <path>] [--tab "<label>"] [--label "<text>"] [--worktree [branch]] [--keep]
 $H send <name> "<message>"     # steer a subagent, works mid-task
 $H wrapup [names...] [--force] # ask subagents to commit and write a handoff, default all
 $H wait <name> [name...] [--close] [--full] # blocks until all settle, or one is blocked, then prints each result or prompt
@@ -28,7 +28,7 @@ $H doctor                      # check the setup and say how to fix what fails, 
 
 The helper sits next to this file. Shell variables may not carry over between Bash calls, so set `H` in each command.
 
-Pass `-` as the brief or message to read it from stdin, which is best for multi-line text. Put `--worktree` after the brief, since it takes an optional branch. `--preset scout` is haiku with low effort and `--preset build` is sonnet with medium effort, and an explicit `--model` or `--effort` overrides it. `--tools lean` is opt-in only: it starts the pane with just Bash, Read, Edit, Write, Glob, Grep, ToolSearch, WebFetch, WebSearch and no MCP servers. Such a pane cannot use Agent, Skill, AskUserQuestion, Artifact, Monitor, TaskStop, ScheduleWakeup, cron or worktree tools, or any MCP server, so use it only for plain file, shell, and web work. `--tools nomcp` keeps every built-in tool and skill but passes `--strict-mcp-config`, so the pane loads no MCP servers or connectors. Give `rename` a tab label or `--pane`, not both.
+Pass `-` as the brief or message to read it from stdin, which is best for multi-line text. Put `--worktree` after the brief, since it takes an optional branch. `--preset scout` is haiku with low effort and `--preset build` is sonnet with medium effort, and an explicit `--model` or `--effort` overrides it. `--tools lean` is opt-in only: it starts the pane with just Bash, Read, Edit, Write, Glob, Grep, ToolSearch, WebFetch, WebSearch and no MCP servers. Such a pane cannot use Agent, Skill, AskUserQuestion, Artifact, Monitor, TaskStop, ScheduleWakeup, cron or worktree tools, or any MCP server, so use it only for plain file, shell, and web work. Give `rename` a tab label or `--pane`, not both.
 
 ## Keep the primary small
 
