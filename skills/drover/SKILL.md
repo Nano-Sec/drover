@@ -11,11 +11,11 @@ Run everything through the helper:
 
 ```bash
 H="${CLAUDE_SKILL_DIR}/drover"
-$H run <name> "<brief>" [spawn options] [--keep] [--timeout ms]  # spawn, wait, print the result, close: one pane, one command
-$H spawn <name> "<brief>" [--model sonnet] [--effort low|medium|high|xhigh|max] [--preset scout|build] [--tools lean] [--mode manual] [--cwd <path>] [--tab "<label>"] [--label "<text>"] [--worktree [branch]] [--keep]
+$H run <name> "<brief>" [spawn options] [--keep] [--timeout ms] [--full]  # spawn, wait, print the result, close: one pane, one command
+$H spawn <name> "<brief>" [--model sonnet] [--effort low|medium|high|xhigh|max] [--preset scout|build] [--tools lean|nomcp] [--mode manual] [--cwd <path>] [--tab "<label>"] [--label "<text>"] [--worktree [branch]] [--keep]
 $H send <name> "<message>"     # steer a subagent, works mid-task
 $H wrapup [names...] [--force] # ask subagents to commit and write a handoff, default all
-$H wait <name> [name...] [--close] # blocks until all settle, or one is blocked, then prints each result or prompt
+$H wait <name> [name...] [--close] [--full] # blocks until all settle, or one is blocked, then prints each result or prompt
 $H result <name>               # same output, without waiting. After a close, prints the saved report
 $H status                      # window size, subagents per tab, and each subagent's state
 $H rename <name> "<label>"     # rename the tab holding that subagent, refused in the primary tab
@@ -28,7 +28,15 @@ $H doctor                      # check the setup and say how to fix what fails, 
 
 The helper sits next to this file. Shell variables may not carry over between Bash calls, so set `H` in each command.
 
-Pass `-` as the brief or message to read it from stdin, which is best for multi-line text. Put `--worktree` after the brief, since it takes an optional branch. `--preset scout` is haiku with low effort and `--preset build` is sonnet with medium effort, and an explicit `--model` or `--effort` overrides it. `--tools lean` is opt-in only: it starts the pane with just Bash, Read, Edit, Write, Glob, Grep, ToolSearch, WebFetch, WebSearch and no MCP servers. Such a pane cannot use Agent, Skill, AskUserQuestion, Artifact, Monitor, TaskStop, ScheduleWakeup, cron or worktree tools, or any MCP server, so use it only for plain file, shell, and web work. Give `rename` a tab label or `--pane`, not both.
+Pass `-` as the brief or message to read it from stdin, which is best for multi-line text. Put `--worktree` after the brief, since it takes an optional branch. `--preset scout` is haiku with low effort and `--preset build` is sonnet with medium effort, and an explicit `--model` or `--effort` overrides it. `--tools lean` is opt-in only: it starts the pane with just Bash, Read, Edit, Write, Glob, Grep, ToolSearch, WebFetch, WebSearch and no MCP servers. Such a pane cannot use Agent, Skill, AskUserQuestion, Artifact, Monitor, TaskStop, ScheduleWakeup, cron or worktree tools, or any MCP server, so use it only for plain file, shell, and web work. `--tools nomcp` keeps every built-in tool and skill but passes `--strict-mcp-config`, so the pane loads no MCP servers or connectors. Give `rename` a tab label or `--pane`, not both.
+
+## Keep the primary small
+
+- Review a branch with `git diff --stat` before any full diff.
+- Pipe test runs and logs through `tail`.
+- Chain dependent steps into one background command, not one turn each.
+- Check preconditions before acting, so failures do not cost retry turns.
+- Use `wait --full` when reviewing a build pane's report. `result` always prints it in full.
 
 ## Workflow
 
@@ -37,7 +45,7 @@ Pass `-` as the brief or message to read it from stdin, which is best for multi-
 3. **One pane:** a single Bash call with `run_in_background: true` running `$H run <name> "<brief>"`. It spawns, waits, prints the result, and closes the pane. **Several panes:** spawn each (they take turns on a lock), then one background call `$H wait a b c --close`. Then end your turn: you are woken when it finishes, so never poll, never run `wait` in the foreground, and never loop on `status`. If a pane is blocked, `wait` returns early with its prompt and the names still running.
 4. **Relay.** The output already contains the final message. Summarize it for the user, and do not read the full transcript or pane unless something looks wrong.
 5. **Steer** when the user asks, with `$H send`. If the subagent had settled, start a new background `wait`. If a wait is still running, leave it. `wait` tracks state, not individual prompts, so after several sends check the message answers everything. An idle pane with background jobs still running counts as paused, so `wait` keeps holding, for up to 30 minutes per pause.
-6. **Closing** is built into `run` and `wait --close`, because idle panes get costlier to resume once the prompt cache expires. If the user wants panes to persist for demos or reports, pass `--keep` to `run` or `spawn`, or run `$H keep <name>` later: pinned panes are skipped by `wait --close`, `run`, and `close --all` (`status` shows `pinned`), and only an explicit `close <name>` closes one. Leave off `--close` if the user has been talking to a pane. Only panes that settled normally are closed: blocked, held, timed out, and paused ones stay open and are reported. Closing saves each pane's last message to `~/.claude/drover/results/<name>.md` (older one to `.prev`), and `$H result <name>` still prints it, so a report alone is no reason to keep a pane.
+6. **Closing** is built into `run` and `wait --close`, because idle panes get costlier to resume once the prompt cache expires. If the user wants panes to persist for demos or reports, pass `--keep` to `run` or `spawn`, or run `$H keep <name>` later: pinned panes are skipped by `wait --close`, `run`, and `close --all` (`status` shows `pinned`), and only an explicit `close <name>` closes one. Leave off `--close` if the user has been talking to a pane. Only panes that settled normally are closed: blocked, held, timed out, and paused ones stay open and are reported. `wait` and `run` print only the first 1,500 characters of a final message and save the full text to `~/.claude/drover/results/<name>.md` as soon as the pane settles, so use `--full` to read it all. Closing saves each pane's last message to `~/.claude/drover/results/<name>.md` (older one to `.prev`, unchanged text is not rewritten), and `$H result <name>` still prints it, so a report alone is no reason to keep a pane.
 
 ## Stopping for now
 

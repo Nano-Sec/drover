@@ -140,6 +140,16 @@ class Options(DroverCase):
         self.assertNotIn("tools", self.entry("a"))
         self.assertNotIn("effort", self.entry("a"))
 
+    def test_nomcp_adds_only_strict_mcp_config(self):
+        out = self.spawn("a", "--tools", "nomcp")
+        self.assertEqual(self.argv("a"), ["--permission-mode", "auto", "-n", "a", "--strict-mcp-config"])
+        self.assertEqual(self.entry("a")["tools"], "nomcp")
+        self.assertIn("no MCP servers or connectors", out)
+
+    def test_every_brief_carries_the_output_note(self):
+        self.spawn("a")
+        self.assertIn("first 1,500 characters", self.brief("a"))
+
     def test_only_lean_is_accepted(self):
         self.assertIn("invalid choice", self.refused("spawn", "a", "x", "--tools", "Bash"))
 
